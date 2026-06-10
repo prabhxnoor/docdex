@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docdex"
+dynamic = ["version"]
+description = "Token-efficient local document index for LLM workflows: incremental extraction, ranked + semantic search, zero daemons, zero cloud."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Prabhnoor Singh" }]
+requires-python = ">=3.9"
+keywords = ["llm", "index", "search", "documents", "claude", "rag", "local-first"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Text Processing :: Indexing",
+]
+dependencies = [
+    "python-docx>=0.8.11",
+    "python-pptx>=0.6.21",
+    "openpyxl>=3.0.10",
+    "pdfminer.six>=20221105",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "build"]
+
+[project.scripts]
+docdex = "docdex.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/prabhxnoor/docdex"
+Issues = "https://github.com/prabhxnoor/docdex/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "docdex.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
