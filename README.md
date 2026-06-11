@@ -48,9 +48,9 @@ Honest caveats, in the report itself ([benchmarks/RESULTS.md](benchmarks/RESULTS
 |---|---|---|---|
 | read whole files until budget | 0/11 | n/a | 203 (then stops) |
 | search + read each top file | 11/11 | n/a (would guess) | 20,228 |
-| **`docdex context --from-file`** | **8/11** | **1/1** | **1,338** |
+| **`docdex context --from-file`** | **8/11** | **1/1** | **1,571** |
 
-The naive search loop *can* cover everything — by reading 20k tokens of full documents, and with no way to say "this field isn't in the corpus." `docdex context` delivers ~73% of the findable fields at ~7% of that token cost **and** correctly reports the absent field as not found instead of forcing a guess. As of v0.3.0 the packet also carries a coverage header (*found / weak / missing / dropped-by-budget*) and flags conflicting sources, so an agent can never mistake a partial packet for a complete one. The 3 it misses are honest lexical-retrieval limits (a synonym the corpus never spells out; the real document losing to a short distractor that shares the field's word) — the exact gaps the next milestone targets with a field-alias registry and reranking. It does not fabricate them; it lists them under "Missing."
+The naive search loop *can* cover everything — by reading 20k tokens of full documents, and with no way to say "this field isn't in the corpus." `docdex context` delivers ~73% of the findable fields at ~7% of that token cost **and** correctly reports the absent field as not found instead of forcing a guess. The packet carries a coverage header (*found / weak / missing / dropped-by-budget*), a token-exact budget line, and a conflicts section, so an agent can never mistake a partial packet for a complete one. As of **v0.4.0** the answers are also *faithful*: each field's value is extracted from the window right after that field's own label (never a neighbour's value on a dense line), equivalent amounts no longer false-conflict, and a present fact is never reported "missing" just because its relevance score rounds to zero — the trust failures an independent audit surfaced in v0.3. The 3 fields it misses are honest lexical-retrieval limits (a synonym the corpus never spells out; the real document losing to a short distractor that shares the field's word) — the exact gaps the next milestone targets with a field-alias registry and reranking. It does not fabricate them; it lists them under "Missing."
 
 ## Using docdex with an LLM (the intended way)
 
@@ -309,7 +309,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-Layout: `src/docdex/` (one module per concern: `walk`, `sync`, `search`, `semantic`, `index_db`, `context`, `vision`, …), `tests/` (82 tests covering walker rules, sync lifecycle, cache-name collision safety, the FTS5 engine, context packets, security/boundary confinement, incremental embedding, vision-note searchability, CLI end-to-end, and purge residue checks).
+Layout: `src/docdex/` (one module per concern: `walk`, `sync`, `search`, `semantic`, `index_db`, `context`, `vision`, …), `tests/` (124 tests covering walker rules, sync lifecycle, cache-name collision safety, the FTS5 engine, coverage-aware context packets, field-local value extraction, conflict/amount normalization, security/boundary confinement, incremental embedding, vision-note searchability, CLI end-to-end, and purge residue checks).
 
 ## License
 
