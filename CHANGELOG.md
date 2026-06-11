@@ -10,14 +10,21 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Nothing yet. Next: **v0.4.0** — meaning-aware search (so "legal name" finds
-"Vendor"), then richer conflict/recency handling. See [ROADMAP.md](ROADMAP.md).
+Next: **v0.4.0 — "A packet you can trust."** The independent round-3 audit
+(2026-06-12) confirmed the v0.3 speed fix but refuted the honesty claim, so v0.4
+hardens the packet *before* making it cleverer: confine `purge --state-only`
+(DDX-028), field-local value extraction so a form answer can't steal a neighbour's
+value (DDX-029), stop reporting present search hits as "missing" (DDX-030), fix
+conflict newest-source + equivalent-amount handling (DDX-031/032), token-exact
+budgets (DDX-033), a Unicode-aware tokenizer (DDX-034), and stop hiding corrupt
+state (DDX-035). Meaning-aware search (aliases/stemming) moves to **v0.5.0**, on
+the auditor's advice to fix extraction first. See [ROADMAP.md](ROADMAP.md).
 
 ## [0.3.0] — 2026-06-11 — "Task-aware context"
 
 Reshapes the `context` packet so an agent can never mistake a partial answer for
 a complete one — the heart of what docdex is for. (Phase 2 of the v0.2 audit
-plan; 106 tests.)
+plan; 108 tests.)
 
 ### Added
 
