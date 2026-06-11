@@ -205,13 +205,29 @@ def purge_targets(project: Project) -> list:
 
 def run_purge(project: Project, yes: bool = False, state_only: bool = False,
               quiet: bool = False) -> int:
+    # Confinement guard (DDX-028): in either mode, never delete `_state/` — or
+    # anything — through a symlinked or out-of-root index dir. Same check the
+    # write path uses, so write and delete agree on what is in-bounds.
+    err = project.index_confinement_error()
+    if err:
+        if not quiet:
+            print(f"refusing to purge: {err}")
+        return 2
     if state_only:
+        state = project.state_dir
+        # Belt-and-suspenders: even with a safe index dir, refuse if `_state`
+        # itself is a symlink or resolves outside the project.
+        if state.is_symlink() or (state.exists() and not project.is_within_root(state)):
+            if not quiet:
+                print(f"refusing to clear state: {state.name}/ resolves "
+                      "outside the project")
+            return 2
         if not yes:
-            print(f"would remove: {project.rel_to_root(project.state_dir)}/ "
+            print(f"would remove: {project.rel_to_root(state)}/ "
                   "(re-run with --yes to confirm)")
             return 1
-        if project.state_dir.exists():
-            shutil.rmtree(project.state_dir)
+        if state.exists():
+            shutil.rmtree(state)
         if not quiet:
             print("state cleared; sources, curated files, and notes untouched. "
                   "Run sync to rebuild.")

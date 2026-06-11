@@ -115,6 +115,25 @@ class Project:
             return False
         return resolved == self.root or self.root in resolved.parents
 
+    def index_confinement_error(self) -> Optional[str]:
+        """Why the index dir is unsafe to operate through, or None if it's safe.
+
+        The shared confinement check behind both the state-*write* guard
+        (`ensure_state_dirs`, which raises) and the state-*delete* guard
+        (`purge`, which refuses and returns nonzero). A pre-planted symlink
+        named like the index dir — or any index dir that resolves outside the
+        root — must never steer a `_state/` write, or a later delete, outside
+        the project. Source files are never touched regardless.
+        """
+        idx = self.index_dir
+        if idx.is_symlink():
+            return (f"index dir {self.index_dir_name!r} is a symlink; refusing "
+                    "to operate through it (it could point outside the project)")
+        if idx.exists() and not self.is_within_root(idx):
+            return (f"index dir {self.index_dir_name!r} resolves outside the "
+                    "project root; refusing to operate")
+        return None
+
     @property
     def max_extract_bytes(self) -> int:
         """Per-file extraction cap in bytes (0 = no cap)."""
@@ -296,19 +315,12 @@ class Project:
 
 def ensure_state_dirs(project: Project) -> None:
     # Boundary guard (defense in depth): even though the name passed validation,
-    # refuse to write if the index dir itself is a symlink or otherwise resolves
-    # outside the project root. A pre-planted symlink named as the index dir
-    # could otherwise steer every `_state/` write — and later `purge` — outside
-    # the project. The source files are never touched regardless.
-    idx = project.index_dir
-    if idx.is_symlink():
-        raise ConfigError(
-            f"index dir {project.index_dir_name!r} is a symlink; refusing to "
-            "write through it (it could point outside the project)")
-    if idx.exists() and not project.is_within_root(idx):
-        raise ConfigError(
-            f"index dir {project.index_dir_name!r} resolves outside the project "
-            "root; refusing to write")
+    # refuse to write if the index dir is a symlink or otherwise resolves outside
+    # the project root. Shared with `purge` via index_confinement_error so the
+    # write path and the delete path can never disagree about what is in-bounds.
+    err = project.index_confinement_error()
+    if err:
+        raise ConfigError(err)
     for d in (
         project.index_dir, project.update_dir, project.notes_dir,
         project.state_dir, project.extracted_dir, project.dumps_dir,
