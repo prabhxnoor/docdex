@@ -123,6 +123,44 @@ Upgrade everywhere with `pipx upgrade docdex`. Uninstall with `pipx uninstall do
 
 Format support out of the box: `.docx`, `.pptx`, `.xlsx`/`.xlsm`, `.pdf`, plus plain-text formats (`.md`, `.txt`, `.csv`, `.json`, `.html`, source code, …). Legacy `.doc`/`.rtf` are converted via the built-in `textutil` on macOS; on Linux they're reported as unsupported rather than failing.
 
+## What to keep in mind (install → index → use → uninstall)
+
+A practical orientation — including the question everyone asks: *does the AI model I use matter for indexing?* (Short answer: **no, not at all.**)
+
+### Installing it
+
+- docdex is an ordinary command-line tool. **You run the one-line install above** — there's no GUI installer and nothing to configure. Run it yourself in a terminal, **or** ask your coding agent (Claude Code, Codex, Gemini CLI) to run the exact same command; it's just a shell command, the agent does nothing special.
+- Prerequisites: **Python ≥ 3.9** and **git** (for the git-URL install). `pipx` is recommended so docdex is isolated and available on your PATH in every folder.
+- Nothing about your documents leaves your machine. docdex is local-first — no account, no cloud, no API key. Installing only downloads the *code*; your files are never uploaded.
+
+### The first index — and the model question
+
+- **Indexing never uses an AI model.** `docdex sync` extracts text and builds its database with plain, deterministic Python (python-docx, pdfminer, SQLite). There is **no Claude, no GPT, and no embeddings involved by default.**
+- So the **model and effort setting make zero difference to indexing.** Opus vs Sonnet vs GPT-5.5; low vs x-high; max vs medium effort — **identical index, identical speed.** Whoever (or whatever) runs `docdex sync` produces the **same database, byte for byte.** The model only matters *later*, when it reasons over the cited packet docdex hands it — and even then docdex's retrieval is deterministic; the model just decides how to use what it's given.
+  - *Only exception:* the optional `DOCDEX_EMBED_CMD`, where **you** explicitly wire in an embedding model for fuzzy search. It's **off by default** — the built-in fuzzy backend is a local hash, no model, no network.
+- **It's fast precisely because it's deterministic, not model-driven.** Measured first-time (cold) sync — macOS arm64, mixed text corpus, from the independent v0.2 audit:
+
+  | Files | First index | Re-sync (warm) | Index on disk |
+  |---:|---:|---:|---:|
+  | 1,000 | ~0.4 s | ~0.2 s | 0.5 MB |
+  | 10,000 | ~3.5 s | ~1.4 s | 4 MB |
+  | 50,000 | ~22 s | ~10 s | 22 MB |
+
+  After the first run, sync is **incremental** — only new/changed files do work, so everyday re-syncs are far cheaper than the "first index" column.
+- What *does* affect indexing time (none of it the model): **PDFs** — especially scanned ones — extract slower than plain text; **very large single files** cost more (one giant multi-hundred-MB text file can bloat the index disproportionately, so keep huge logs/exports out of the indexed folder); **cloud placeholder files** (OneDrive/iCloud) must download first (sync prefetches them).
+
+### Using it day to day
+
+- The intended loop — your agent runs this for you, guided by the `CLAUDE.md`/`AGENTS.md` that `init` scaffolds: **`docdex status`** once per session → **`docdex context "your task" --budget N`** for a cited evidence packet → fill only the gaps it reports.
+- **Re-sync after you add or change files** (`docdex sync`); `docdex status` tells you when the index is stale.
+- Honest current limits worth knowing (v0.2): it matches **words, not synonyms** yet; it does **not flag conflicting or out-of-date facts** yet (if two files disagree you may get both — check the cited sources); and a **too-small `--budget` returns partial context**, so give multi-field jobs a generous budget (≈6000–8000). All three are on the [roadmap](ROADMAP.md).
+
+### Uninstalling it
+
+- **Per folder, first:** run `docdex purge --yes` *inside that folder* — it removes everything docdex created (the `_index/` state) and prints exactly what it will delete. **Your source documents are never touched.** It deliberately leaves the scaffolded `CLAUDE.md`/`AGENTS.md`; delete those by hand if you want them gone.
+- **The tool itself:** `pipx uninstall docdex` (or `pip uninstall docdex`).
+- **Order matters:** purge each project *before* uninstalling the tool, since `purge` is itself a docdex command.
+
 ## Quickstart
 
 ```bash
@@ -229,10 +267,11 @@ Drop new files anywhere (or into `_index/Update/` if you haven't decided where t
 
 ## Performance notes & honest limits
 
-- Designed for corpora up to roughly **10,000 files**. Sync on a ~5,000-file corpus is seconds when warm; the first full extraction is the only slow run.
+- Comfortable for corpora up to roughly **10,000 files** end-to-end (the FTS5 `search` engine itself stays fast well past that — see the indexing-time table under [What to keep in mind](#what-to-keep-in-mind-install--index--use--uninstall)). The first full extraction is the only slow run; warm re-syncs are incremental.
 - Files ≥ 200 MB are inventoried but not hashed (no rename detection for them). A supported text file is still fully extracted into a cache regardless of size, so a single enormous text file produces an equally large cache — keep such files out via `skip_dirs` or a dedicated folder if that matters.
+- Keyword `search` runs on the SQLite **FTS5/BM25** index, so its latency is effectively **flat as the corpus grows** (~36 ms median even at 50k files in the v0.2 audit). Only the no-FTS5 fallback scans caches linearly.
+- `docdex context` is the exception today: it does a full freshness walk per call, so on very large corpora it's slower than raw `search` (a known v0.3 fix — see the [roadmap](ROADMAP.md)). Run `docdex status` once per session and keep budgets sensible.
 - Semantic search scans the index linearly per query — simple and dependable, a few seconds on large corpora. If you outgrow it, plug in an external embedding backend or a real vector store.
-- Keyword `search` reads every cache per query; same trade-off, same scale.
 - Encrypted, corrupted, or image-only files are recorded in `extract_status.tsv` (`failed` / `empty`) instead of being silently retried forever — `status` reports them separately from real gaps.
 
 ## Exit codes
@@ -257,7 +296,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-Layout: `src/docdex/` (one module per concern: `walk`, `sync`, `search`, `semantic`, `vision`, …), `tests/` (42 tests covering walker rules, sync lifecycle, cache-name collision safety, incremental embedding, vision-note searchability, CLI end-to-end, and purge residue checks).
+Layout: `src/docdex/` (one module per concern: `walk`, `sync`, `search`, `semantic`, `index_db`, `context`, `vision`, …), `tests/` (82 tests covering walker rules, sync lifecycle, cache-name collision safety, the FTS5 engine, context packets, security/boundary confinement, incremental embedding, vision-note searchability, CLI end-to-end, and purge residue checks).
 
 ## License
 

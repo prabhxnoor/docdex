@@ -66,6 +66,63 @@ foundation is solid enough to build them safely.
   - [x] Friendly errors on corrupt state; duplicate-vs-rename fix; embedder
     validation; semantic no-match honesty; SPDX license.
   - [x] Corrupt-inventory detection made Python-version-independent (NUL guard).
+- **Independently audited 2026-06-11 (round 2)** — reports kept locally in
+  `~/Projects/docdex-qa/v0.2.0/`. The FTS5 engine was validated (flat ~36 ms
+  search even at 50k files); the auditor found **1 critical + 7 major** issues,
+  all feeding the v0.3 plan below. Headline verdict: *"the engine is good; the gap
+  is task awareness — coverage, budgets, conflicts, follow-up signalling."*
+
+---
+
+## v0.3 — the sequenced plan  *(drawn from the v0.2 audit + efficiency review)*
+
+Theme: **make the packet trustworthy and task-aware.** The engine already scales;
+v0.3 closes the trust blockers, makes `context` honest about coverage/budget and
+fast at scale, then adds the cheapest recall wins. Build in this order:
+
+**Phase 1 — Trust blockers (pure bug-fixes; ship first, no design debate).**
+- ⬜ **DDX-015 [CRITICAL]** — a symlink named as `index_dir` still writes state
+  *outside* the project. Resolve `index_dir` through symlinks and reject any path
+  that lands outside root, at every init/sync write.
+- ⬜ **DDX-016 [MAJOR]** — a corrupt `index.db` crashes `sync` with a raw
+  traceback. Catch it, quarantine the file, rebuild from caches (or fail friendly).
+- ⬜ **DDX-017 [MAJOR]** — finish state-reader hardening: the NUL/header/row checks
+  `read_inventory` got must also cover `extract_status.tsv` and the semantic
+  manifests; a ragged inventory must error, not silently read as zero rows.
+- ⬜ **DDX-021 [MAJOR]** — a `SIGKILL`-ed sync leaves a 30-minute blocking lock;
+  record host/PID and recover immediately if the PID is dead.
+- ⬜ **DDX-022 [MAJOR]** — one huge text file balloons the index (310 MB source →
+  742 MB state); add a `max_extract_bytes` cap with `--allow-large-text`.
+- ⬜ **DDX-023/024/025/026 [MINOR]** — `search` before first sync should say "run
+  sync", not "no match"; restrict `index_dir` to a safe slug (reject `~`/newline);
+  reconcile or document hand-edited caches; add the `context` workflow to `AGENTS.md`.
+
+**Phase 2 — Make the product honest and fast (the packet itself).**
+- ⬜ **DDX-019 [MAJOR]** — `context` does an O(files) freshness walk every call
+  (4.4 s at 50k while `search` stays 36 ms). Use last-sync metadata by default;
+  add `--check-freshness` for the full walk.
+- ⬜ **Budget safety + coverage accounting (DDX-018 — this is where the budget
+  nudge you asked to fold into v0.3 lives).** Reject negative/zero budgets; when
+  the budget truncates evidence, say so loudly and suggest a larger `--budget`;
+  add a coverage header (*parsed N · found · weak · missing · dropped-by-budget*).
+  Done properly in the tool, not only in the agent scaffold.
+- ⬜ **DDX-020 [MAJOR]** — form mode silently caps at 40 fields and ignores Unicode
+  labels. Parse all fields (Unicode-aware) and disclose "parsed N, dropped M".
+
+**Phase 3 — Retrieval quality + conflict awareness (the value layer).**
+- ⬜ **Field-alias registry** (M1) — the cheapest recall win ("legal name" → "Vendor").
+- ⬜ **Stemming / lemmatisation**, then a **utility reranker** (M1).
+- ⬜ **mtime on every evidence line + a `Conflicts` section** (M2) — the 30-vs-40
+  problem; surface disagreement, do *not* auto-resolve.
+
+**Phase 4 — Lifecycle & self-maintenance (M3).** DB hygiene (`VACUUM`/optimize,
+history rotation) first; then the **opt-in auto-archival** tier — but only after
+Phase 3, because the auditor's pre-mortem (`CONTEXT_EFFICIENCY_REVIEW.md` §8)
+confirms archival needs a live/archived index flag, a last-used signal, and
+conflict-awareness to be safe. The M3 safety rails are non-negotiable.
+
+The target packet shape is in the review's §9 — adopt it as the v0.3 `context`
+output. The thematic detail for each milestone (M1–M6) follows.
 
 ---
 
