@@ -9,7 +9,16 @@ from docdex.inventory import read_inventory
 
 
 def tokenize(query: str) -> List[str]:
-    return [t.lower() for t in re.findall(r"[A-Za-z0-9][A-Za-z0-9_\-]{1,}", query)]
+    """Split text into lowercased word tokens, Unicode-aware (DDX-034).
+
+    A token starts with a letter/digit of any script and may contain word
+    characters and hyphens, so "Échéance" stays one token instead of breaking
+    into the ASCII fragments "ch"/"ance". This is the single tokenizer used for
+    search, FTS query construction, form-label matching, value lines, and the
+    "tried" display, and it aligns with SQLite FTS5's unicode61 tokenizer (which
+    folds both the indexed text and the MATCH terms the same way)."""
+    return [t.lower() for t in re.findall(r"[^\W_][\w\-]*", query, re.UNICODE)
+            if len(t) >= 2]
 
 
 def snippet(text: str, query: str, terms: List[str], width: int = 260) -> str:

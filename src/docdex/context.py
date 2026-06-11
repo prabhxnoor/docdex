@@ -22,8 +22,8 @@ from docdex.search import run_search, snippet, tokenize
 # Lines that look like they carry a concrete value are the best "likely answer"
 # candidates. Conservative on purpose — the agent confirms; we only surface.
 VALUE_RE = re.compile(
-    r"(\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion)?)"
-    r"|([₹$€£]\s?\d)"
+    r"([₹$€£]\s?\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
+    r"|(\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
     r"|(\b\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b)"
     r"|(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d)"
     r"|([A-Z0-9]{6,}\d|[0-9]{2}[A-Z]{4,})"            # ID-ish tokens
@@ -70,10 +70,20 @@ def _candidates(project: Project, query: str, folder: Optional[str],
         hits = run_search(project, query, folder=folder, limit=pool)
         cands = [{"rel": rel, "chunk": 0, "text": snip, "score": float(score)}
                  for score, rel, _cache, snip in hits]
-    return [c for c in cands
-            if c["score"] >= MIN_EVIDENCE_SCORE
-            and c["rel"] not in skip
-            and not _is_scaffold(project, c["rel"])]
+    content = set(_content_terms(query))
+
+    def keep(c: dict) -> bool:
+        if c["rel"] in skip or _is_scaffold(project, c["rel"]):
+            return False
+        # Match *existence* is decided by content-term overlap, never by the BM25
+        # display score: a real hit whose score rounds to 0 (a term present in
+        # every doc) must not be dropped as "missing" (DDX-030). The score still
+        # drives ranking below; it just isn't a truth filter here.
+        if not content:
+            return c["score"] >= MIN_EVIDENCE_SCORE
+        return bool(content & set(tokenize(c["text"])))
+
+    return [c for c in cands if keep(c)]
 
 
 def _trim(text: str, limit: int = EXCERPT_CHARS) -> str:
@@ -81,13 +91,111 @@ def _trim(text: str, limit: int = EXCERPT_CHARS) -> str:
     return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0] + " …"
 
 
+# A field's value region ends at ';', a newline, a sentence end, or just before
+# the *next* 'Label:' that follows a value — so a dense "A: x B: y" line yields
+# each field's own value without the catastrophic per-character splitting a bare
+# label-lookahead caused.
+_STOP = re.compile(r"[;\n]|(?<=[.!?])\s|(?<=\S)\s+[^\W\d_][\w '&/()\-]{0,38}?[:_]\s",
+                   re.UNICODE)
+
+
+def _clauses(text: str) -> List[str]:
+    """Split text into clauses on ';', newlines, and sentence ends."""
+    parts = re.split(r"[;\n]+|(?<=[.!?])\s+", text)
+    return [p.strip() for p in parts if p and p.strip()]
+
+
+def _label_window(text: str, label_terms: set) -> Optional[str]:
+    """The text right after this field's label — all label tokens must be present
+    (by token, so 'term' ≠ 'terms') — cut before the next label or delimiter, so
+    a dense fragment yields just this field's value region, not the neighbour's."""
+    toks = set(tokenize(text))
+    if not label_terms <= toks:
+        return None
+    low = text.lower()
+    start = max(low.rfind(t) + len(t) for t in label_terms)
+    after = text[start:]
+    stop = _STOP.search(after)
+    window = after[:stop.start()] if stop else after
+    return re.sub(r"^[\s:_\-]+", "", window).strip()
+
+
 def _value_lines(text: str, terms: set) -> List[str]:
+    """Clauses that mention a query term *by token* (so 'term' no longer matches
+    'terms') and carry a concrete value."""
     out = []
-    for sentence in re.split(r"(?<=[.!?])\s+|\n", text):
-        low = sentence.lower()
-        if any(t in low for t in terms) and VALUE_RE.search(sentence):
-            out.append(_trim(sentence, 160))
+    for clause in _clauses(text):
+        if (terms & set(tokenize(clause))) and VALUE_RE.search(clause):
+            out.append(_trim(clause, 160))
     return out
+
+
+def _amount(value: str) -> Optional[float]:
+    """Normalize a money/number string to a float, applying Indian and metric
+    scale words, so 'INR 4.2 crore', '₹4.20 cr' and '42,000,000' compare equal."""
+    s = value.lower().replace(",", "")
+    m = re.search(r"\d+\.?\d*", s)
+    if not m:
+        return None
+    n = float(m.group(0))
+    if "crore" in s or re.search(r"\bcr\b", s):
+        n *= 1e7
+    elif "lakh" in s or re.search(r"\blac?\b", s):
+        n *= 1e5
+    elif "billion" in s or re.search(r"\bbn\b", s):
+        n *= 1e9
+    elif "million" in s or re.search(r"\bmn\b", s):
+        n *= 1e6
+    elif re.search(r"\bk\b", s):
+        n *= 1e3
+    return n
+
+
+def _value_key(value: str):
+    """Comparison key for conflict grouping: equal amounts collapse to one key
+    (no false conflict between '₹4.20 cr' and '4.2 crore'); everything else
+    compares by normalized text."""
+    n = _amount(value)
+    if n is not None:
+        return ("num", round(n, 2))
+    return ("txt", re.sub(r"\s+", " ", value).strip().lower())
+
+
+def _field_values(text: str, label_terms: set) -> List[tuple]:
+    """Every (clause, value) where this field's label is present and a value
+    follows it within the label window — never elsewhere in the clause."""
+    out = []
+    for clause in _clauses(text):
+        w = _label_window(clause, label_terms)
+        if not w:
+            continue
+        m = VALUE_RE.search(w)
+        if m:
+            out.append((clause, re.sub(r"\s+", " ", m.group(0)).strip()))
+    return out
+
+
+def _field_answer(text: str, label_terms: set, foreign_terms: set):
+    """This field's own label-local answer: (value, display, clean) or None.
+
+    The value comes from the window after the label; `clean` is False when that
+    window still names another field (a broad/dense line that didn't split), so
+    the caller can downgrade it to 'weak' instead of asserting it as found."""
+    fallback = None
+    for clause in _clauses(text):
+        w = _label_window(clause, label_terms)
+        if not w:
+            continue
+        m = VALUE_RE.search(w)
+        if not m:
+            continue
+        value = re.sub(r"\s+", " ", m.group(0)).strip()
+        display = _trim(w, 160)
+        clean = not (foreign_terms & set(tokenize(w)))
+        if clean:
+            return (value, display, clean)
+        fallback = fallback or (value, display, clean)
+    return fallback
 
 
 def _content_terms(task: str) -> List[str]:
@@ -159,8 +267,11 @@ def _freshness(project: Project, check: bool) -> str:
 
 
 def _conflicts(items, mtimes: dict):
-    """Group (key, value, source, line) tuples by key; a group whose sources give
-    two or more *different* values is a conflict. Newer source (by mtime) first."""
+    """Group (key, value, source, line) by key. Within a key, group values by a
+    *normalized* key so equivalent amounts don't false-conflict (DDX-032); a key
+    with two or more distinct values is a conflict. Each distinct value is shown
+    via its genuinely newest source — not the first one seen (DDX-031) — newest
+    value first."""
     groups: "OrderedDict[object, list]" = OrderedDict()
     for key, value, source, line in items:
         if not key or not value:
@@ -168,13 +279,14 @@ def _conflicts(items, mtimes: dict):
         groups.setdefault(key, []).append((value, source, line))
     out = []
     for key, members in groups.items():
-        by_value: "OrderedDict[str, tuple]" = OrderedDict()
+        by_norm: "OrderedDict[object, list]" = OrderedDict()
         for value, source, line in members:
-            by_value.setdefault(value, (source, line))
-        if len(by_value) >= 2:
-            ranked = sorted(by_value.items(),
-                            key=lambda kv: mtimes.get(kv[1][0], ""), reverse=True)
-            out.append((key, ranked))
+            by_norm.setdefault(_value_key(value), []).append((value, source, line))
+        if len(by_norm) >= 2:
+            reps = [max(group, key=lambda vsl: mtimes.get(vsl[1], ""))
+                    for group in by_norm.values()]
+            reps.sort(key=lambda vsl: mtimes.get(vsl[1], ""), reverse=True)
+            out.append((key, reps))
     return out
 
 
@@ -201,30 +313,43 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     pinned = set()
     conflict_items: list = []          # (key, value, source, line)
     if form_fields:
+        label_tokens = {lbl: set(tokenize(lbl)) for lbl in form_fields}
+        all_label_tokens = set().union(*label_tokens.values()) if label_tokens else set()
         for label in form_fields:
-            label_terms = set(tokenize(label))
+            label_terms = label_tokens[label]
+            foreign = all_label_tokens - label_terms   # other fields' label tokens
             fhits = _candidates(project, label, folder, pool=6, exclude=exclude)
             best = _pick_field_hit(fhits, label, label_terms)
             if not best:
                 resolved.append({"label": label, "has_value": False,
                                  "line": None, "hit": None})
                 continue
-            # Match the field's OWN label terms only — never the union of all
-            # fields, or one field's value line leaks into another's answer.
-            vlines = _value_lines(best["text"], label_terms)
-            if vlines:
-                line = re.sub(rf"^\s*{re.escape(label)}\s*[:_]\s*", "",
-                              vlines[0], flags=re.I).strip() or vlines[0]
+            # Extract this field's value label-locally, preferring the candidate
+            # that yields a *clean* (single-field) value over a broad/dense line.
+            ans, ans_hit = None, best
+            for h in [best] + [x for x in fhits if x is not best]:
+                cand = _field_answer(h["text"], label_terms, foreign)
+                if cand:
+                    ans, ans_hit = cand, h
+                    if cand[2]:                  # clean → take it
+                        break
+            if ans is None:
+                # matched the label but no clean value — show the label-local
+                # text, not a broad snippet that could include a neighbour's value.
+                w = _label_window(best["text"], label_terms)
+                line = _trim(w, 160) if w else snippet(
+                    best["text"], label, sorted(label_terms), width=160)
+                resolved.append({"label": label, "has_value": False,
+                                 "line": line, "hit": best})
             else:
-                line = snippet(best["text"], label, tokenize(label), width=160)
-            resolved.append({"label": label, "has_value": bool(vlines),
-                             "line": line, "hit": best})
-            pool.append(best)
-            pinned.add((best["rel"], best["chunk"]))
+                _value, display, clean = ans
+                resolved.append({"label": label, "has_value": clean,
+                                 "line": display, "hit": ans_hit})
+            pool.append(ans_hit)
+            pinned.add((ans_hit["rel"], ans_hit["chunk"]))
             for h in fhits:                # conflicting values for THIS field only
-                for vl in _value_lines(h["text"], label_terms):
-                    conflict_items.append(
-                        (label, _value_near(vl, label_terms), h["rel"], vl))
+                for clause, val in _field_values(h["text"], label_terms):
+                    conflict_items.append((label, val, h["rel"], clause))
 
     missing_fields = [r["label"] for r in resolved if r["hit"] is None]
 
@@ -246,7 +371,9 @@ def build_packet(project: Project, task: str, budget: int = 3000,
                 dropped_fields.append(r["label"])
 
     top_score = max((c["score"] for c in pool), default=0.0)
-    rel_floor = max(MIN_EVIDENCE_SCORE, 0.15 * top_score)
+    # A relative floor only when scores are meaningful; when every hit scores ~0
+    # (a term in every doc), don't let the floor suppress real evidence (DDX-030).
+    rel_floor = 0.15 * top_score if top_score > MIN_EVIDENCE_SCORE else 0.0
     seen = set()
     per_source: dict = {}
     evidence = []
@@ -333,10 +460,10 @@ def build_packet(project: Project, task: str, budget: int = 3000,
 
     if conflicts:
         out.append("## Conflicts")
-        for key, ranked in conflicts:
+        for key, reps in conflicts:
             label = key if isinstance(key, str) else (", ".join(key) or "value")
-            newest_val, (newest_src, _) = ranked[0]
-            others = "; ".join(f"{v} in {src}" for v, (src, _) in ranked[1:])
+            newest_val, newest_src, _ = reps[0]
+            others = "; ".join(f"{v} in {src}" for v, src, _ in reps[1:])
             out.append(f"- {label}: {newest_val} in {newest_src} (newest) vs {others}")
         out.append("")
 
