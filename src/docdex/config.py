@@ -205,6 +205,10 @@ class Project:
         return self.state_dir / "index.db"
 
     @property
+    def scaffold_fingerprint_path(self) -> Path:
+        return self.state_dir / "scaffold.json"
+
+    @property
     def semantic_index_path(self) -> Path:
         return self.state_dir / "semantic_index.jsonl"
 

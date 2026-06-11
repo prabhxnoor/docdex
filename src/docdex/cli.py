@@ -240,6 +240,12 @@ def cmd_context(args: argparse.Namespace) -> int:
             return 2
         text = form.read_text(encoding="utf-8", errors="replace")
         fields = ctxmod.parse_form_fields(text)
+        if not fields:
+            print(f"docdex: no form fields found in {args.from_file} "
+                  "(expected lines like 'Label:' or 'Label ____'). "
+                  "Pass a task description instead to search free-text.",
+                  file=sys.stderr)
+            return 2
         if project.is_within_root(form):
             exclude.add(project.rel_to_root(form))  # never cite the form to fill itself
         if not task:

@@ -10,13 +10,25 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 from docdex import index_db
 from docdex.context import build_packet, parse_form_fields
 from docdex.scaffold import run_init, run_purge
 from docdex.search import tokenize
 from docdex.sync import run_sync
+
+_SRC = str(Path(__file__).resolve().parents[1] / "src")
+
+
+def _cli(root, *argv):
+    return subprocess.run(
+        [sys.executable, "-m", "docdex", *argv], cwd=str(root),
+        env=dict(os.environ, PYTHONPATH=_SRC),
+        capture_output=True, text=True, timeout=300)
 
 
 def _project_with(tmp_path, files: dict):
@@ -171,3 +183,79 @@ def test_equivalent_amounts_do_not_false_conflict(tmp_path):
     assert "## Conflicts" not in packet, packet               # DDX-032: same amount
     # and the currency value is not truncated to a bare "₹4".
     assert "₹4 " not in packet and "₹4." not in packet.replace("₹4.20", "")
+
+
+# ---- DDX-033: token-exact budget accounting + honest over-budget signal ----
+def test_tiny_freetext_budget_signals_over_budget(tmp_path):
+    import re as _re
+    from docdex import tokens as _tok
+    project = _project_with(tmp_path, {
+        "v.md": "Liability cap: INR 4.2 crore. Payment terms: net 45 days.\n"})
+    packet = build_packet(project, "liability cap payment terms", budget=1)
+    assert "## Dropped (budget)" in packet, packet
+    assert "over budget" in packet or "larger than" in packet, packet
+    m = _re.search(r"~(\d+) used", packet)
+    assert m and int(m.group(1)) > 1
+    # reported `used` matches the real rendered token count (no big undercount).
+    assert abs(_tok.count_tokens(packet) - int(m.group(1))) <= 3, (
+        _tok.count_tokens(packet), m.group(1))
+
+
+def test_ample_budget_has_no_over_budget_noise(tmp_path):
+    project = _project_with(tmp_path, {"v.md": "Annual revenue was 12 crore.\n"})
+    packet = build_packet(project, "annual revenue", budget=3000)
+    assert "## Dropped (budget)" not in packet
+    assert "over budget" not in packet
+
+
+# ---- DDX-035: corrupt inventory must be surfaced, not hidden ----------------
+def test_corrupt_inventory_is_surfaced_not_hidden(tmp_path):
+    project = _project_with(tmp_path, {"f.md": "Inventory corruption token here.\n"})
+    # corrupt the inventory header; the FTS index.db is left intact.
+    project.inventory_path.write_text("path\tsize\nragged\n", encoding="utf-8")
+    packet = build_packet(project, "Inventory corruption token", budget=1000)
+    assert "⚠" in packet, packet
+    assert "sync" in packet.lower()
+    # must NOT present a confident, healthy "indexed ... not re-checked" line.
+    assert "not re-checked" not in packet
+
+
+# ---- DDX-036: a user-edited scaffold file is real content, not hidden -------
+def test_user_edited_scaffold_is_surfaced(tmp_path):
+    root = tmp_path / "corpus"
+    root.mkdir()
+    (root / "data.md").write_text("Ordinary corpus content.\n", encoding="utf-8")
+    project = run_init(root, quiet=True)       # writes scaffold + fingerprints
+    (root / "CLAUDE.md").write_text(
+        "Real user note: CLAUDEONLY88 value is 88 crore.\n", encoding="utf-8")
+    run_sync(project, quiet=True)
+    index_db.build(project, quiet=True)
+    packet = build_packet(project, "CLAUDEONLY88", budget=1000)
+    assert "CLAUDEONLY88" in packet, packet
+    assert "no index hits" not in packet
+
+
+def test_unedited_scaffold_still_not_cited(tmp_path):
+    project = _project_with(tmp_path, {"data.md": "Revenue was 12 crore.\n"})
+    packet = build_packet(project, "context budget sync agent docdex", budget=2000)
+    assert "AGENTS.md" not in packet
+    assert "CLAUDE.md" not in packet
+
+
+# ---- DDX-037: a zero-field form file must not run as a filename query -------
+def test_zero_field_form_file_errors(tmp_path):
+    project = _project_with(tmp_path, {"data.md": "Some ordinary content here.\n"})
+    form = project.root / "empty_form.md"
+    form.write_text("just prose with no labels in this paragraph at all.\n",
+                    encoding="utf-8")
+    r = _cli(project.root, "context", "--from-file", str(form), "--budget", "1000")
+    assert r.returncode == 2, (r.returncode, r.stdout, r.stderr)
+    assert "field" in (r.stdout + r.stderr).lower()
+
+
+# ---- DDX-038: duplicate form labels are preserved, not silently deduped -----
+def test_duplicate_form_labels_are_preserved():
+    fields = parse_form_fields("GST number:\nGST number:\nLiability cap:\n")
+    assert len(fields) == 3, fields
+    assert fields[0] == "GST number" and fields[2] == "Liability cap"
+    assert "#2" in fields[1]
