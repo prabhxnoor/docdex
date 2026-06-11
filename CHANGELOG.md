@@ -10,15 +10,61 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Next: **v0.4.0 — "A packet you can trust."** The independent round-3 audit
-(2026-06-12) confirmed the v0.3 speed fix but refuted the honesty claim, so v0.4
-hardens the packet *before* making it cleverer: confine `purge --state-only`
-(DDX-028), field-local value extraction so a form answer can't steal a neighbour's
-value (DDX-029), stop reporting present search hits as "missing" (DDX-030), fix
-conflict newest-source + equivalent-amount handling (DDX-031/032), token-exact
-budgets (DDX-033), a Unicode-aware tokenizer (DDX-034), and stop hiding corrupt
-state (DDX-035). Meaning-aware search (aliases/stemming) moves to **v0.5.0**, on
-the auditor's advice to fix extraction first. See [ROADMAP.md](ROADMAP.md).
+Next: **v0.5.0** — meaning-aware search (aliases, stemming, reranking) so "legal
+name" finds "Vendor", plus recency/authority weighting on the conflict layer. See
+[ROADMAP.md](ROADMAP.md).
+
+## [0.4.0] — 2026-06-12 — "A packet you can trust"
+
+Closes every finding from the independent round-3 audit (4 critical + 5 major +
+2 minor). The v0.3 packet had the right *shape*, but the audit produced confident
+packets that were wrong; v0.4 makes the honesty guarantees literally true. The
+engine and its speed are unchanged. 124 tests (16 new regressions, one per
+finding, on deliberately adversarial fixtures).
+
+### Security
+
+- **`purge --state-only` can no longer delete outside the project.** Both purge
+  modes and the state-*write* path now share one confinement check, so a symlink
+  named like the index dir can't steer a delete — or a write — outside the
+  project. *In plain terms:* the v0.2.1 symlink fix had missed the `--state-only`
+  path; that hole is closed, and the write and delete paths can't drift apart
+  again. (DDX-028.)
+
+### Fixed
+
+- **A form answer can't borrow a neighbouring field's value.** Field values are
+  matched by whole word (so "term" no longer matches "terms") and read from the
+  window right after that field's *own* label, with dense multi-field lines split
+  first and broad lines marked "weak" instead of "found." *In plain terms:* on a
+  packed line like `GST: …; PAN: …; Liability cap: …`, each field now gets its own
+  value instead of the whole line — the worst kind of wrong when filling a form.
+  (DDX-029.)
+- **A present fact is never reported "missing."** `context` decides whether a hit
+  is real from its content, not from a relevance score that can round to zero when
+  a word appears in every file — so facts `search` finds are no longer dropped as
+  absent. (DDX-030.)
+- **Conflicts name the right newest source and stop crying wolf.** When sources
+  disagree, the newest is chosen per value (not the first one seen), and amounts
+  that are the same written differently — `INR 4.2 crore`, `₹4.20 cr`,
+  `42,000,000` — are recognised as equal instead of flagged as a conflict (and the
+  shown value is no longer truncated to `₹4`). (DDX-031, DDX-032.)
+- **The budget line tells the truth.** It reports the *rendered* packet's real
+  token count, and a packet that overflows a tiny budget says so loudly in
+  free-text mode too — no more confident-looking over-budget packet. (DDX-033.)
+- **Non-English evidence is found.** One Unicode-aware tokenizer is used
+  everywhere, so a label and value like `Échéance: 31/12/2026` is retrieved
+  instead of split into ASCII fragments and missed. (DDX-034.)
+- **Corrupt state can't hide behind a healthy packet.** If the inventory is
+  unreadable, `context` says so loudly (dates/freshness unavailable, run `sync`)
+  instead of emitting a confident packet over broken state. (DDX-035.)
+- **A note you add to `CLAUDE.md` is treated as real evidence.** Scaffold files
+  are fingerprinted at `init`; `context` hides only the *unchanged* ones, so an
+  edited `CLAUDE.md`/`AGENTS.md` surfaces like any other file while a pristine one
+  stays out of the way. (DDX-036.)
+- **A form file with no recognisable fields says so** (instead of searching for
+  the filename), and **duplicate form labels are kept** (disambiguated `#2`) so
+  the coverage count matches the form you can see. (DDX-037, DDX-038.)
 
 ## [0.3.0] — 2026-06-11 — "Task-aware context"
 

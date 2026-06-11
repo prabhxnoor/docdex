@@ -6,7 +6,7 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-06-12 (after the v0.3.0 round-3 audit)._
+> _Last updated: 2026-06-12 (after v0.4.0)._
 
 ## North star
 
@@ -94,6 +94,14 @@ foundation is solid enough to build them safely.
   it is not yet trustworthy — optimise for 'never confidently wrong' before 'more
   semantically broad.'"* This reshaped the plan below: **v0.4.0 is now packet-trust
   hardening, not meaning-aware search.**
+- **v0.4.0 — "A packet you can trust"** (2026-06-12): **Phase 3** — closed all 11
+  round-3 findings (DDX-028–038). `purge --state-only` confined via a shared guard;
+  field-local value extraction (no cross-field leakage); match-existence split from
+  the BM25 display score; conflict v2 (newest-per-value + amount normalization);
+  token-exact budgets; one Unicode-aware tokenizer; corrupt state surfaced not
+  hidden; scaffold fingerprinting (an edited `CLAUDE.md` surfaces); zero-field and
+  duplicate form-label fixes. 124 tests; the form benchmark holds at 8/11 with now-
+  *correct* values, and a real-CLI "make the packet lie" smoke passed.
 
 ---
 
@@ -143,51 +151,51 @@ it cleverer. Build in this order:
 > and corrupt state hidden. Phase 3 is now about making each of those guarantees
 > literally true.
 
-**Phase 3 — A packet you can trust (→ v0.4.0). ← next.**  *This replaces
+**Phase 3 — A packet you can trust — ✅ shipped in v0.4.0.**  *This replaced
 meaning-aware search at the front of the queue, on the auditor's explicit advice:
 "aliases will not fix v0.3's worst bugs — layered on today's value heuristics they
 will only increase the candidate pool and the false-found/false-conflict rate. Fix
 field-local extraction first." (`CONTEXT_EFFICIENCY_REVIEW.md` §5.)*
 
-- ⬜ **DDX-028 [CRITICAL · security]** — `purge --state-only` still deletes through
+- ✅ **DDX-028 [CRITICAL · security]** — `purge --state-only` still deletes through
   a symlinked index dir (the DDX-015 fix missed this branch). Apply the same
   `is_within_root`/`is_symlink` confinement as full purge, via a *shared* path
   helper, + a regression test.
-- ⬜ **DDX-029 [CRITICAL]** — **field-local value extraction.** Stop substring label
+- ✅ **DDX-029 [CRITICAL]** — **field-local value extraction.** Stop substring label
   matching (`term` ∈ `terms`), split semicolon/table-dense lines, take the value in
   a bounded window *after* the matched label, and downgrade broad multi-label lines
   to *weak*. This is the worst class — wrong-as-right in form answers, which is the
   user's core due-diligence use case.
-- ⬜ **DDX-030 [CRITICAL]** — separate "a match exists" from the BM25 *display*
+- ✅ **DDX-030 [CRITICAL]** — separate "a match exists" from the BM25 *display*
   score; never report present, searchable evidence as *missing* just because the
   rounded score is ~0 (common in small / all-matching corpora).
-- ⬜ **DDX-031 [CRITICAL]** — conflict grouping by value → *all* its sources; mark
+- ✅ **DDX-031 [CRITICAL]** — conflict grouping by value → *all* its sources; mark
   the genuinely newest source (not the first one seen); list agreeing sources.
-- ⬜ **DDX-032 [MAJOR]** — normalise equivalent amounts (₹4.20 cr = 4.2 crore =
+- ✅ **DDX-032 [MAJOR]** — normalise equivalent amounts (₹4.20 cr = 4.2 crore =
   42,000,000) so they don't false-conflict; capture the full currency phrase (no
   `₹4` truncation); show raw + normalised value.
-- ⬜ **DDX-033 [MAJOR]** — **token-exact budget.** Count the *rendered* packet with
+- ✅ **DDX-033 [MAJOR]** — **token-exact budget.** Count the *rendered* packet with
   the same tokenizer the packet reports, warn whenever `used > requested`, enforce a
   minimum viable budget, and emit the drop signal in free-text mode too (not only
   form mode).
-- ⬜ **DDX-034 [MAJOR]** — one Unicode-aware tokenizer across parse / FTS query /
+- ✅ **DDX-034 [MAJOR]** — one Unicode-aware tokenizer across parse / FTS query /
   value-match / "tried" display, so `Échéance` evidence is actually retrieved.
-- ⬜ **DDX-035 [MAJOR]** — stop `_mtime_map` swallowing a corrupt-inventory error;
+- ✅ **DDX-035 [MAJOR]** — stop `_mtime_map` swallowing a corrupt-inventory error;
   `context` must fail friendly or warn loudly, never emit a confident packet from
   known-corrupt state.
-- ⬜ **DDX-036 [MAJOR]** — fingerprint scaffold files at init and exclude only the
+- ✅ **DDX-036 [MAJOR]** — fingerprint scaffold files at init and exclude only the
   *unchanged* ones, so a user-edited root `CLAUDE.md`/`AGENTS.md` is treated as real
   evidence instead of silently hidden.
-- ⬜ **DDX-037 / DDX-038 [MINOR]** — a zero-field `--from-file` says "0 fields"
+- ✅ **DDX-037 / DDX-038 [MINOR]** — a zero-field `--from-file` says "0 fields"
   instead of running the filename as a free-text query; duplicate form labels are
   preserved/flagged, not silently deduped.
-- ⬜ **Tests for every repro (DDX-028–038)** + a scale guard (default `context`
+- ✅ **Tests for every repro (DDX-028–038)** + a scale guard (default `context`
   stays near `search`; only `--check-freshness` may grow). The audit's §10 lists
   exactly why the 108-test suite missed these — clean one-value-per-sentence
   corpora — so the new tests use dense / shared-label / Unicode / score-0 fixtures.
 
-**Phase 4 — Meaning-aware search + deeper conflict (→ v0.5.0).**  *(Was Phase 3;
-moved one release back, deliberately gated behind Phase 3.)*
+**Phase 4 — Meaning-aware search + deeper conflict (→ v0.5.0). ← next.**  *(Was
+Phase 3; moved one release back, deliberately gated behind Phase 3.)*
 - ⬜ **Stemming / lemmatisation** first (`close`/`closed`, `governing`/`governed`).
 - ⬜ **Field-alias registry** ("legal name" → "Vendor"), deterministic, visible in
   `--explain`, never used to fabricate a value.
@@ -338,20 +346,14 @@ have at least one hard failure.
 
 ---
 
-## Known limitations (honest, current — pre-v0.4)
+## Known limitations (honest, current)
 
-- **The packet is fast and compact but not yet fully trustworthy** (round-3 audit).
-  Until v0.4 lands: form answers can pull a neighbouring field's value on dense
-  lines (verify form-fill output), some present evidence can be reported "missing"
-  when BM25 rounds to 0, the conflict section can mark the wrong source as newest,
-  and non-English (Unicode) evidence can be missed. See Phase 3 / DDX-029–036.
-- **`purge --state-only` is not confined** through a symlinked index dir
-  (DDX-028) — a normal install has a real `_index/` folder and is unaffected, but
-  don't point the index dir at a symlink until v0.4.
-- Lexical matching only by default (M1) — pure paraphrase needs a local
-  `DOCDEX_EMBED_CMD`; meaning-aware aliases/stemming land in v0.5.0.
-- Conflict/recency reasoning is a first lexical pass (M2) — conflicting facts are
-  surfaced, not yet authority/recency-ranked.
+- Lexical matching only by default (M1) — "legal name" won't find "Vendor" unless
+  the corpus spells it out; pure paraphrase needs a local `DOCDEX_EMBED_CMD`.
+  Meaning-aware aliases / stemming / reranking land in v0.5.0.
+- Conflict handling is lexical with amount-normalization (M2) — disagreements are
+  surfaced with the newest source marked and equivalent amounts merged, but not
+  yet authority/recency-*ranked*.
 - macOS/Linux only (M5); Windows unverified.
 
 ---
