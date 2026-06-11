@@ -46,11 +46,11 @@ Honest caveats, in the report itself ([benchmarks/RESULTS.md](benchmarks/RESULTS
 
 | method | form fields covered | absent field flagged honestly | tokens |
 |---|---|---|---|
-| read whole files until budget | 0/11 | n/a | 135 (then stops) |
+| read whole files until budget | 0/11 | n/a | 203 (then stops) |
 | search + read each top file | 11/11 | n/a (would guess) | 20,228 |
-| **`docdex context --from-file`** | **8/11** | **1/1** | **1,464** |
+| **`docdex context --from-file`** | **8/11** | **1/1** | **1,338** |
 
-The naive search loop *can* cover everything — by reading 20k tokens of full documents, and with no way to say "this field isn't in the corpus." `docdex context` delivers ~73% of the findable fields at ~7% of that token cost **and** correctly reports the absent field as not found instead of forcing a guess. The 3 it misses are honest lexical-retrieval limits (a synonym the corpus never spells out; the real document losing to a short distractor that shares the field's word) — the exact gaps the v0.3 roadmap targets with a field-alias registry and reranking. It does not fabricate them; it lists them under "Missing."
+The naive search loop *can* cover everything — by reading 20k tokens of full documents, and with no way to say "this field isn't in the corpus." `docdex context` delivers ~73% of the findable fields at ~7% of that token cost **and** correctly reports the absent field as not found instead of forcing a guess. As of v0.3.0 the packet also carries a coverage header (*found / weak / missing / dropped-by-budget*) and flags conflicting sources, so an agent can never mistake a partial packet for a complete one. The 3 it misses are honest lexical-retrieval limits (a synonym the corpus never spells out; the real document losing to a short distractor that shares the field's word) — the exact gaps the next milestone targets with a field-alias registry and reranking. It does not fabricate them; it lists them under "Missing."
 
 ## Using docdex with an LLM (the intended way)
 
@@ -72,16 +72,20 @@ claude        # or your agent of choice
 $ ./ctx context "what is the liability cap and payment terms with Meridian" --budget 1200
 # context packet
 Task: what is the liability cap and payment terms with Meridian
-Budget: 1200 tok  |  Used: ~130  |  Index: fresh
+Coverage: 2 value answer(s)
+Budget: 1200 requested · ~130 used · 1070 free
+Index: indexed 2026-06-11 14:02 — not re-checked (run `docdex status` to find new files)
 
-## Likely answers (cited)
+## Answers
 - The aggregate liability cap under this agreement is INR 4.2 crore.  [Contracts/scan_0231 copy.md ·0]
 - Payment terms are net-45 from invoice date.  [Contracts/scan_0231 copy.md ·0]
 
 ## Evidence
-[E1] Contracts/scan_0231 copy.md ·0  (score 5.31)
+[E1] Contracts/scan_0231 copy.md ·0  (2026-06-11)  (score 5.31)
   "...aggregate liability cap under this agreement is INR 4.2 crore. Payment terms are net-45..."
 ```
+
+The header lines are the honesty contract: **Coverage** (found / weak / missing / dropped-by-budget) and **Budget** (requested / used / free) mean an agent can always tell a *partial* packet from a *complete* one. A `## Conflicts` section appears when two sources disagree (newer flagged); `## Dropped (budget)` appears with a "rerun with a bigger budget" hint when the budget cut something. Pass `--check-freshness` to fully re-verify staleness (it walks the corpus); by default `context` stays cheap and trusts the last sync.
 
 For a form, `./ctx context --from-file vendor_form.md --budget 3000` retrieves evidence field-by-field and tells the agent which fields it couldn't find. docdex stays deterministic — it packs and cites evidence; the agent already in the loop does the reasoning. No API keys, no model calls from docdex.
 
@@ -182,7 +186,7 @@ docdex doctor --e2e                          # full integrity self-test
 |---|---|
 | `docdex init` | Initialize a project. `--index NAME` to rename the index folder, `--no-agent-docs` / `--no-wrapper` to skip extras. |
 | `docdex sync` | Incremental reindex: cloud prefetch → inventory + text caches → context dumps → semantic index → vision queue. Flags to skip stages: `--no-prefetch`, `--no-dumps`, `--no-embed`, `--no-vision`; plus `--dry-run`, `--backfill`, `--no-hash`. |
-| `docdex context "task"` | Build a token-budgeted evidence packet (cited answers, excerpts, gaps). `--budget N`, `--folder X`, `--from-file form.md`, `--explain`. |
+| `docdex context "task"` | Build a token-budgeted evidence packet (coverage header, cited answers, conflicts, gaps). `--budget N`, `--folder X`, `--from-file form.md`, `--explain`, `--check-freshness`. |
 | `docdex status` | Freshness check (exit 0 fresh, 1 stale/gaps). Distinguishes real cache gaps from scanned files with no text. |
 | `docdex search "q"` | Ranked keyword search over extracted text. `--folder X`, `-n N`. |
 | `docdex semantic "q"` | Semantic-index search. Same flags. |

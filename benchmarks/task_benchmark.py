@@ -192,7 +192,7 @@ def method_search_loop(project, ground_truth, fields):
 def method_context(project, ground_truth, fields, budget):
     packet = ctxmod.build_packet(project, "fill the vendor onboarding form",
                                  budget=budget, form_fields=fields)
-    honest = [a for a in ABSENT if f"{a}: — not found" in packet]
+    honest = [a for a in ABSENT if f"{a}: not found" in packet]
     return {"covered": covered(packet, ground_truth),
             "tokens": tok.count_tokens(packet),
             "honest_absent": honest, "packet": packet}

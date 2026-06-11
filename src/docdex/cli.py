@@ -232,6 +232,7 @@ def cmd_context(args: argparse.Namespace) -> int:
         return 2
     fields = None
     task = args.task
+    exclude = set()
     if args.from_file:
         form = Path(args.from_file)
         if not form.is_file():
@@ -239,6 +240,8 @@ def cmd_context(args: argparse.Namespace) -> int:
             return 2
         text = form.read_text(encoding="utf-8", errors="replace")
         fields = ctxmod.parse_form_fields(text)
+        if project.is_within_root(form):
+            exclude.add(project.rel_to_root(form))  # never cite the form to fill itself
         if not task:
             task = f"fill the form: {form.name}"
     if not task:
@@ -247,7 +250,9 @@ def cmd_context(args: argparse.Namespace) -> int:
     try:
         packet = ctxmod.build_packet(project, task, budget=args.budget,
                                      folder=args.folder, form_fields=fields,
-                                     explain=args.explain)
+                                     explain=args.explain,
+                                     check_freshness=args.check_freshness,
+                                     exclude=exclude)
     except ctxmod.EmptyTask as e:
         print(f"docdex: {e}", file=sys.stderr)
         return 2
@@ -354,6 +359,8 @@ def main(argv=None) -> int:
     p.add_argument("--from-file", help="a form file: retrieve evidence per field")
     p.add_argument("--explain", action="store_true",
                    help="show retrieval internals (queries, candidates, engine)")
+    p.add_argument("--check-freshness", action="store_true",
+                   help="fully re-check staleness (walks the corpus; off by default)")
     p.set_defaults(func=cmd_context)
 
     p = sub.add_parser("embed", help="rebuild the semantic index (incremental)")

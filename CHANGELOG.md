@@ -10,8 +10,51 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Nothing yet. Next up is v0.3 Phase 2 — making the `context` packet honest about
-coverage and budget, and fast on large corpora. See [ROADMAP.md](ROADMAP.md).
+Nothing yet. Next: **v0.4.0** — meaning-aware search (so "legal name" finds
+"Vendor"), then richer conflict/recency handling. See [ROADMAP.md](ROADMAP.md).
+
+## [0.3.0] — 2026-06-11 — "Task-aware context"
+
+Reshapes the `context` packet so an agent can never mistake a partial answer for
+a complete one — the heart of what docdex is for. (Phase 2 of the v0.2 audit
+plan; 106 tests.)
+
+### Added
+
+- **A coverage line on every packet.** In form mode it reads e.g. *"12 fields ·
+  8 found · 2 weak · 1 missing · 1 dropped(budget)"*; in free-text mode it counts
+  value answers and unmatched terms. *In plain terms:* the packet now tells the
+  agent up front how much of the job it actually covered — so a thin answer looks
+  thin instead of looking finished.
+- **Honest budgets (audit DDX-018).** The budget line shows *requested · used ·
+  free*; a non-positive budget retrieves nothing and says so loudly; and when the
+  budget cuts evidence a **"Dropped (budget)"** section appears with a "rerun with
+  --budget N" hint. *In plain terms:* a too-small budget can no longer hand back a
+  confident-but-incomplete packet without flagging it.
+- **A Conflicts section.** When two sources give different values for the same
+  thing — one file says 30 deals, a newer one says 40 — the packet flags the
+  disagreement and marks the newer source instead of silently picking one. (A
+  first, lexical version; richer recency/authority handling is the next milestone.)
+- **`--check-freshness`** for an on-demand full staleness re-check.
+
+### Changed
+
+- **`context` is fast again on large folders (audit DDX-019).** It no longer
+  walks the whole corpus on every call just to print freshness; by default it
+  trusts the last sync (and says so), doing the full walk only with
+  `--check-freshness`. *In plain terms:* the packet command keeps pace with search
+  even on big corpora.
+- **Form parsing handles all fields and Unicode labels (audit DDX-020).** No more
+  silent stop at 40 fields, and labels like "Échéance" now parse.
+- Packet section "Likely answers" is now **"Answers"**; evidence lines show the
+  source's date.
+
+### Notes
+
+- The form-filling benchmark still reproduces at 8/11 fields with the absent field
+  flagged honestly, now at ~1,338 tokens (chars/4) — ~7% of a naive search loop's
+  cost. Excluding docdex's own scaffold files from evidence (so they're never
+  cited as answers) also made packets leaner.
 
 ## [0.2.1] — 2026-06-11 — "Trust & robustness"
 

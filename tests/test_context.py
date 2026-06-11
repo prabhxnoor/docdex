@@ -35,7 +35,8 @@ def test_task_packet_surfaces_cited_answer(vendor):
     assert "# context packet" in packet
     assert "INR 4.2 crore" in packet
     assert "Contracts/scan_0231 copy.md" in packet
-    assert "## Likely answers" in packet and "## Evidence" in packet
+    assert "## Answers" in packet and "## Evidence" in packet
+    assert "Coverage:" in packet  # the new honesty header
 
 
 def test_packet_excludes_scaffold_readmes(vendor):
@@ -48,8 +49,8 @@ def test_packet_respects_budget(vendor):
     small = ctxmod.build_packet(vendor, "vendor agreement liability payment terms", budget=120)
     # "Used: ~N" must not blow far past the budget
     used_line = [l for l in small.splitlines() if l.startswith("Budget:")][0]
-    used = int(used_line.split("Used: ~")[1].split()[0].rstrip("(≈chars/4) "))
-    assert used <= 220  # budget + small reserve
+    used = int(used_line.split("~", 1)[1].split()[0])
+    assert used <= 260  # header reserve + one excerpt; "used" honestly includes overhead
 
 
 def test_form_mode_fills_found_and_flags_missing(vendor):
@@ -58,8 +59,9 @@ def test_form_mode_fills_found_and_flags_missing(vendor):
                                  form_fields=fields)
     assert "29ABCDE1234F1Z5" in packet           # GST found
     assert "INR 4.2 crore" in packet             # liability found
-    assert "Bank IFSC: — not found" in packet    # genuinely absent
+    assert "Bank IFSC: not found" in packet      # genuinely absent
     assert "## Missing" in packet and "Bank IFSC" in packet
+    assert "Coverage:" in packet and "found" in packet
 
 
 def test_parse_form_fields():

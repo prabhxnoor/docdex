@@ -2,11 +2,11 @@
   "files": 115,
   "findable": 11,
   "absent": 1,
-  "full_tokens": 30567,
+  "full_tokens": 30635,
   "results": {
     "read-all (budget)": {
       "covered": [],
-      "tokens": 135
+      "tokens": 203
     },
     "search-loop": {
       "covered": [
@@ -35,7 +35,7 @@
         "Annual contract value",
         "Effective date"
       ],
-      "tokens": 1464,
+      "tokens": 1338,
       "honest_absent": [
         "Bank IFSC"
       ]

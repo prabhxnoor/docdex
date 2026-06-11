@@ -75,10 +75,14 @@ foundation is solid enough to build them safely.
   — the symlink index-escape (DDX-015), corrupt-DB self-heal (DDX-016), state-
   reader hardening (DDX-017), dead-PID lock recovery (DDX-021), large-file cap
   (DDX-022), and the minors. 98 tests (16 new regressions mirroring the repros).
+- **v0.3.0 — "Task-aware context"** (2026-06-11): **Phase 2** — the `context`
+  packet now carries a coverage header + honest budget accounting (DDX-018),
+  flags conflicting sources (newer first), is fast at scale again (DDX-019: no
+  per-call corpus walk), and parses all/Unicode form fields (DDX-020). 106 tests.
 
 ---
 
-## v0.3 — the sequenced plan  *(drawn from the v0.2 audit + efficiency review)*
+## The sequenced plan  *(drawn from the v0.2 audit + efficiency review)*
 
 Theme: **make the packet trustworthy and task-aware.** The engine already scales;
 v0.3 closes the trust blockers, makes `context` honest about coverage/budget and
@@ -101,25 +105,26 @@ fast at scale, then adds the cheapest recall wins. Build in this order:
   `index_dir` rejects `~`/control chars (spaces still allowed); hand-edited caches
   documented; `AGENTS.md` teaches the `context` workflow.
 
-**Phase 2 — Make the product honest and fast (the packet itself).**
-- ⬜ **DDX-019 [MAJOR]** — `context` does an O(files) freshness walk every call
-  (4.4 s at 50k while `search` stays 36 ms). Use last-sync metadata by default;
-  add `--check-freshness` for the full walk.
-- ⬜ **Budget safety + coverage accounting (DDX-018 — this is where the budget
-  nudge you asked to fold into v0.3 lives).** Reject negative/zero budgets; when
-  the budget truncates evidence, say so loudly and suggest a larger `--budget`;
-  add a coverage header (*parsed N · found · weak · missing · dropped-by-budget*).
-  Done properly in the tool, not only in the agent scaffold.
-- ⬜ **DDX-020 [MAJOR]** — form mode silently caps at 40 fields and ignores Unicode
-  labels. Parse all fields (Unicode-aware) and disclose "parsed N, dropped M".
+**Phase 2 — Make the product honest and fast — ✅ shipped in v0.3.0.**
+- ✅ **DDX-019 [MAJOR]** — `context` no longer walks the corpus for freshness on
+  every call; it trusts the last sync by default, `--check-freshness` does the walk.
+- ✅ **Budget honesty + coverage accounting (DDX-018)** — coverage header (found/
+  weak/missing/dropped), a `requested · used · free` budget line, a non-positive
+  budget retrieves nothing loudly, and a `Dropped (budget)` section with a rerun
+  hint. Done in the tool, not just the scaffold.
+- ✅ **DDX-020 [MAJOR]** — form mode parses all fields (no 40-cap) and Unicode
+  labels; the coverage line discloses the field count.
+- ✅ **Conflicts (M2 seed)** — differing values across sources are flagged with the
+  newer marked; lexical for now, deepened in v0.4.
 
-**Phase 3 — Retrieval quality + conflict awareness (the value layer).**
+**Phase 3 — Meaning-aware search + deeper conflict (→ v0.4.0).**
 - ⬜ **Field-alias registry** (M1) — the cheapest recall win ("legal name" → "Vendor").
 - ⬜ **Stemming / lemmatisation**, then a **utility reranker** (M1).
-- ⬜ **mtime on every evidence line + a `Conflicts` section** (M2) — the 30-vs-40
-  problem; surface disagreement, do *not* auto-resolve.
+- ⬜ **Deeper conflict & recency** (M2) — the lexical `Conflicts` section + evidence
+  dates shipped in v0.3.0; v0.4 adds synonym-aware grouping and recency/authority
+  weighting, still surfacing disagreement rather than auto-resolving.
 
-**Phase 4 — Lifecycle & self-maintenance (M3).** DB hygiene (`VACUUM`/optimize,
+**Phase 4 — Lifecycle & self-maintenance (M3 → v0.5.0).** DB hygiene (`VACUUM`/optimize,
 history rotation) first; then the **opt-in auto-archival** tier — but only after
 Phase 3, because the auditor's pre-mortem (`CONTEXT_EFFICIENCY_REVIEW.md` §8)
 confirms archival needs a live/archived index flag, a last-used signal, and

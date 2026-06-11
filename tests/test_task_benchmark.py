@@ -31,7 +31,7 @@ def test_packet_never_fabricates_absent_field(tmp_path):
     # The honesty guarantee: a field with no evidence is reported "not found",
     # never invented.
     for absent in task_benchmark.ABSENT:
-        assert f"{absent}: — not found" in packet
+        assert f"{absent}: not found" in packet
 
     # And it must actually deliver real context cheaply: a majority of the
     # answerable fields, well under the cost of reading everything.
