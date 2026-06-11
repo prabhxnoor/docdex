@@ -139,9 +139,11 @@ def create_queue(project: Project, quiet: bool = False) -> dict:
     done = existing_note_sources(project)
     notes_prefix = f"{project.index_dir_name}/{NOTES_DIR}/"
 
+    scaffold = {f"{project.index_dir_name}/{NOTES_DIR}/README.md",
+                f"{project.index_dir_name}/Update/README.md"}
     rows = []
     for rel in read_inventory(project.inventory_path):
-        if rel in done or rel.startswith(notes_prefix):
+        if rel in done or rel.startswith(notes_prefix) or rel in scaffold:
             continue
         ext = Path(rel).suffix.lower()
         reason = ""

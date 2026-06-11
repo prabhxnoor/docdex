@@ -130,7 +130,7 @@ docdex semantic "rough description of it"   # fuzzy retrieval
 docdex doctor --e2e                          # full integrity self-test
 ```
 
-`init` also installs a `./ctx` wrapper in the project root, so `./ctx sync`, `./ctx search "..."` work for anyone (and any LLM) in that directory without knowing about docdex — from any subdirectory too.
+`init` also installs a `./ctx` wrapper in the project root, so `./ctx sync`, `./ctx search "..."` work for anyone (and any LLM) without knowing about docdex. The wrapper lives at the project root: call it as `./ctx` from there, or just use `docdex` from any subdirectory (it walks up to find the project). The wrapper resolves its own location, so a path like `../ctx` works from a subfolder too.
 
 ## Commands
 
@@ -224,7 +224,7 @@ Drop new files anywhere (or into `_index/Update/` if you haven't decided where t
 ## Performance notes & honest limits
 
 - Designed for corpora up to roughly **10,000 files**. Sync on a ~5,000-file corpus is seconds when warm; the first full extraction is the only slow run.
-- Files ≥ 200 MB are inventoried but not hashed (no rename detection for them).
+- Files ≥ 200 MB are inventoried but not hashed (no rename detection for them). A supported text file is still fully extracted into a cache regardless of size, so a single enormous text file produces an equally large cache — keep such files out via `skip_dirs` or a dedicated folder if that matters.
 - Semantic search scans the index linearly per query — simple and dependable, a few seconds on large corpora. If you outgrow it, plug in an external embedding backend or a real vector store.
 - Keyword `search` reads every cache per query; same trade-off, same scale.
 - Encrypted, corrupted, or image-only files are recorded in `extract_status.tsv` (`failed` / `empty`) instead of being silently retried forever — `status` reports them separately from real gaps.

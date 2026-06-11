@@ -83,6 +83,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         print("\nNext: run `docdex sync`.")
     elif s["gaps"]:
         print("\nNext: run `docdex doctor` to inspect cache gaps.")
+    else:
+        print("\n(status is a fast stat-based check; `sync` does the authoritative "
+              "content-hash comparison.)")
     return 1 if s["stale"] or s["gaps"] else 0
 
 
@@ -189,8 +192,12 @@ def cmd_embed(args: argparse.Namespace) -> int:
 
 def cmd_dumps(args: argparse.Namespace) -> int:
     from docdex.dumps import build_dumps, parse_size
+    project = _project(args)
+    if not project.inventory_path.exists():
+        print("docdex: nothing to dump — run `docdex sync` first", file=sys.stderr)
+        return 2
     max_bytes = parse_size(args.max_bytes) if args.max_bytes else None
-    build_dumps(_project(args), folder=args.folder, max_bytes=max_bytes)
+    build_dumps(project, folder=args.folder, max_bytes=max_bytes)
     return 0
 
 

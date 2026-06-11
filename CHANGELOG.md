@@ -8,12 +8,17 @@ All notable changes to docdex are recorded here. The format follows
 unavoidably technical gets a plain-English *"In plain terms"* line so you can
 tell what changed and why without reading the code.
 
-## [Unreleased] — v0.2 "Trust & Context Foundations"
+## [Unreleased]
+
+Nothing yet — see [docs/V0.2_PLAN.md](docs/V0.2_PLAN.md) for what's next (v0.3:
+field-alias registry, stemming/synonyms, optional reranking).
+
+## [0.2.0] — 2026-06-11 — "Trust & Context Foundations"
 
 Theme: make every result safe and trustworthy, then make docdex hand an agent
-*the context it needs for a task* instead of a list of search hits. Full plan
-in [docs/V0.2_PLAN.md](docs/V0.2_PLAN.md). This section fills in as the work
-lands; nothing here has shipped in a tagged release yet.
+*the context it needs for a task* instead of a list of search hits. Shaped by an
+independent third-party audit (every confirmed finding below is closed) and an
+architecture review. Full plan in [docs/V0.2_PLAN.md](docs/V0.2_PLAN.md).
 
 ### Security
 
@@ -82,6 +87,17 @@ lands; nothing here has shipped in a tagged release yet.
 - **Corrupt index files give a clear message, not a stack trace.** A damaged
   `.docdex.json` or inventory file now reports "this file looks corrupt; run
   doctor or re-sync" with a clean exit code. (Audit finding DDX-008.)
+- Smaller polish from the audit: `dumps` before a sync now says "run sync
+  first" instead of writing an empty file (DDX-012); docdex's own scaffold
+  READMEs are no longer queued as OCR work or shown as evidence (DDX-011);
+  `status` notes that it is a fast check and `sync` is authoritative (DDX-005);
+  docs clarify the `./ctx` wrapper from subdirectories (DDX-010) and that large
+  text files are cached in full (DDX-013).
+
+### Packaging
+
+- Switched to an SPDX `license = "MIT"` declaration, clearing the setuptools
+  deprecation warning that was set to break builds in 2027. (Audit DDX-014.)
 
 ## [0.1.1] — 2026-06-11
 

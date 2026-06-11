@@ -1,13 +1,14 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "docdex"
 dynamic = ["version"]
-description = "Token-efficient local document index for LLM workflows: incremental extraction, ranked + semantic search, zero daemons, zero cloud."
+description = "Token-efficient local document index for LLM workflows: incremental extraction, ranked + semantic search, token-budgeted context packets, zero daemons, zero cloud."
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Prabhnoor Singh" }]
 requires-python = ">=3.9"
 keywords = ["llm", "index", "search", "documents", "claude", "rag", "local-first"]
@@ -15,7 +16,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
