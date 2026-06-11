@@ -21,6 +21,54 @@ $ docdex search "liability cap in the Acme master agreement"
 
 If you work with a large folder of poorly named documents, the information you need is *in* the files but not *findable* — filenames lie, and LLM context windows are too expensive to fill with 5,000 documents per question. docdex fixes the economics: extraction and indexing are paid **once**, at sync time; every question afterwards costs only a ranked handful of snippets.
 
+## Does it actually help? Measured.
+
+The repo ships a reproducible benchmark (`python3 benchmarks/run_benchmark.py`): a deterministic 162-file corpus with 12 facts planted inside `.docx`/`.xlsx`/`.pptx`/`.pdf` files whose **filenames deliberately lie** (`scan_0231 copy.docx`, `Final_v7_USE_THIS_ONE.xlsx`), surrounded by 150 distractors that share the queries' vocabulary. For each question we measure what an agent must ingest **until the answer is actually in its context**:
+
+| method | right file ranked #1 | answer reached | median tokens to answer |
+|---|---|---|---|
+| browse by filename (no index) | 0/12 | 0/12 | 976 (then fails) |
+| raw `grep -ril` (no index) | 0/12 | 0/12 | 1,017 (then fails) |
+| read everything (no index) | 12/12 | 12/12 | **28,312** |
+| **`docdex search`** | **12/12** | **12/12** | **780** |
+
+**36× less context per question**, after a one-time sub-second indexing cost on this corpus — and the gap widens with corpus size, because "read everything" scales with the corpus while `docdex search` doesn't. Filename browsing and grep aren't just worse, they're structurally blind: Office files are zip containers and PDF streams are compressed, so their content is invisible to both.
+
+Honest caveats, in the report itself ([benchmarks/RESULTS.md](benchmarks/RESULTS.md)): token counts are a chars/4 approximation; the corpus is synthetic (by design — it's checked in and re-runnable by anyone); and the bundled semantic backend is lexical, so it cannot bridge a *pure* paraphrase — keyword `search` is the workhorse, and true paraphrase retrieval needs an external embedding via `DOCDEX_EMBED_CMD`.
+
+## Using docdex with an LLM (the intended way)
+
+docdex works standalone, but it was designed to be **driven by an agent** — Claude Code, Codex, Gemini CLI, or anything that can run shell commands. The point of the benchmark table above is precisely that an agent *without* an index has only bad moves available (guess filenames, grep blindly, or read everything).
+
+**Setup is two commands, then the agent configures itself:**
+
+```bash
+cd ~/Work/BigCorpus
+docdex init && docdex sync
+claude        # or your agent of choice
+```
+
+`init` scaffolds `CLAUDE.md` (auto-loaded by Claude Code) and `AGENTS.md` (for other agents). These teach the agent the session protocol: check `./ctx status` first, offer to sync if stale, and retrieve in cost order — curated overview → one topical file → `search`/`semantic` snippets → a single source file. Never bulk-load the corpus.
+
+**What a session looks like afterwards:**
+
+> **You:** What's our liability cap with Meridian?
+> **Agent:** *(runs `./ctx search "liability cap Meridian"`)* Per `Misc/scan_0231 copy.docx`, the aggregate liability cap under the Meridian MSA is INR 4.2 crore. — *~800 tokens of context, not 28,000.*
+
+**One-time curation worth doing.** After the first sync, hand your agent this prompt — it builds the cheapest retrieval tier (and is the step that turns a *search tool* into a *knowledge base*):
+
+```
+Read _index/HANDOFF.md. Using ./ctx search and the extracted caches under
+_index/_state/extracted/, write _index/00_MASTER_INDEX.md: a 5-8K-token
+overview of this corpus — key facts, per-domain snapshot tables, and a file
+map. Cite source paths. Then write topical NN_*.md deep-dives for the 3-5
+largest domains. Never load all caches at once; work folder by folder.
+```
+
+**Vision/OCR with a multimodal agent.** `docdex vision create` queues scanned PDFs, images, and chart-only slides into a manifest; your agent processes them in batches, writes notes to `_index/vision_notes/`, and `docdex sync` makes them searchable. Image content becomes retrievable text exactly once.
+
+**Automation-safe.** All output is plain text and exit codes are stable (`status` exits 1 when stale), so docdex drops into hooks, cron, and CI — e.g. a session-start hook that warns when the index is out of date.
+
 ## Install
 
 Requires Python ≥ 3.9 on macOS or Linux.

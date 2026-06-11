@@ -198,9 +198,14 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
 
 def search(project: Project, query: str, folder: Optional[str] = None,
            limit: int = 8) -> List[Tuple[float, dict]]:
+    """Hybrid ranking: embedding similarity, boosted by the fraction of
+    distinct query terms the chunk actually contains. Pure cosine over hashed
+    features rewards vocabulary-soup documents; the coverage boost keeps
+    chunks that really mention the query on top."""
     if not project.semantic_index_path.exists():
         raise FileNotFoundError("semantic index missing — run `docdex embed` or `docdex sync`")
     qvec = embed(query)
+    terms = set(re.findall(r"[a-z0-9][a-z0-9_\-]{2,}", query.lower()))
     hits: List[Tuple[float, dict]] = []
     with open(project.semantic_index_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -210,7 +215,10 @@ def search(project: Project, query: str, folder: Optional[str] = None,
                 continue
             if folder and folder.lower() not in row.get("path", "").lower():
                 continue
-            hits.append((dot(qvec, row["vector"]), row))
+            base = dot(qvec, row["vector"])
+            haystack = (row.get("text", "") + " " + row.get("path", "")).lower()
+            coverage = (sum(1 for t in terms if t in haystack) / len(terms)) if terms else 0.0
+            hits.append((base * (1.0 + 2.0 * coverage), row))
     hits.sort(key=lambda x: -x[0])
     return hits[:limit]
 

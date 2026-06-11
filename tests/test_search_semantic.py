@@ -32,7 +32,8 @@ def test_semantic_build_and_search(synced):
     assert meta["files"] > 0 and meta["chunks"] > 0
     hits = semantic.search(synced, "quantum key distribution", limit=5)
     assert hits
-    assert any(row["path"] == "Notes/real.pdf" for _, row in hits)
+    # hybrid scoring: the chunk that actually contains the terms must win
+    assert hits[0][1]["path"] == "Notes/real.pdf"
 
 
 def test_semantic_incremental_rebuild(synced, monkeypatch):

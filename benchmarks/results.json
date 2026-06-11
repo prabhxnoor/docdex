@@ -1,0 +1,669 @@
+{
+  "meta": {
+    "files": 162,
+    "raw_mb": 1.92,
+    "corpus_tokens": 54150,
+    "cases": 12,
+    "sync_s": 4.0,
+    "embed_s": 0.9,
+    "index_mb": 1.03,
+    "python": "3.9.6",
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "token_model": "chars/4 approximation"
+  },
+  "summary": {
+    "filename": {
+      "hit1": 0,
+      "hit3": 0,
+      "answered": 0,
+      "med_tokens": 976,
+      "med_ms": 0
+    },
+    "rawgrep": {
+      "hit1": 0,
+      "hit3": 0,
+      "answered": 0,
+      "med_tokens": 1017,
+      "med_ms": 259
+    },
+    "readall": {
+      "hit1": 12,
+      "hit3": 12,
+      "answered": 12,
+      "med_tokens": 28312,
+      "med_ms": 158
+    },
+    "docdex": {
+      "hit1": 12,
+      "hit3": 12,
+      "answered": 12,
+      "med_tokens": 780,
+      "med_ms": 646
+    },
+    "docdex-sem-x": {
+      "hit1": 4,
+      "hit3": 5,
+      "answered": 4,
+      "med_tokens": 694,
+      "med_ms": 155
+    },
+    "docdex-fuz": {
+      "hit1": 7,
+      "hit3": 8,
+      "answered": 7,
+      "med_tokens": 786,
+      "med_ms": 553
+    },
+    "docdex-sem": {
+      "hit1": 0,
+      "hit3": 0,
+      "answered": 0,
+      "med_tokens": 803,
+      "med_ms": 157
+    }
+  },
+  "cases": {
+    "filename": {
+      "Q01": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 976,
+        "ms": 0.23287500000002126
+      },
+      "Q02": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 976,
+        "ms": 0.2277090000006865
+      },
+      "Q03": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1973,
+        "ms": 0.20404200000001538
+      },
+      "Q04": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 976,
+        "ms": 0.16966699999976242
+      },
+      "Q05": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 976,
+        "ms": 0.2195000000000391
+      },
+      "Q06": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 976,
+        "ms": 0.23179200000100764
+      },
+      "Q07": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 976,
+        "ms": 0.20320799999851147
+      },
+      "Q08": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 976,
+        "ms": 0.1845829999993498
+      },
+      "Q09": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 976,
+        "ms": 0.22150000000209502
+      },
+      "Q10": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 976,
+        "ms": 0.2929579999992882
+      },
+      "Q11": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 976,
+        "ms": 0.194207999999918
+      },
+      "Q12": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 976,
+        "ms": 0.2049160000012762
+      }
+    },
+    "rawgrep": {
+      "Q01": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1017,
+        "ms": 258.4608750000008
+      },
+      "Q02": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1017,
+        "ms": 253.07691699999958
+      },
+      "Q03": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1017,
+        "ms": 214.61983300000043
+      },
+      "Q04": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1017,
+        "ms": 335.30670799999916
+      },
+      "Q05": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1017,
+        "ms": 277.85895799999946
+      },
+      "Q06": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1017,
+        "ms": 233.2589580000004
+      },
+      "Q07": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 0,
+        "ms": 220.4841660000021
+      },
+      "Q08": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1017,
+        "ms": 271.80545799999936
+      },
+      "Q09": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1017,
+        "ms": 261.16933400000164
+      },
+      "Q10": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1017,
+        "ms": 251.83720799999776
+      },
+      "Q11": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1044,
+        "ms": 305.9958750000007
+      },
+      "Q12": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1017,
+        "ms": 350.5154170000004
+      }
+    },
+    "readall": {
+      "Q01": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 42660,
+        "ms": 402.6932920000004
+      },
+      "Q02": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 128,
+        "ms": 2.726834000000622
+      },
+      "Q03": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 50023,
+        "ms": 595.9449999999986
+      },
+      "Q04": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 33235,
+        "ms": 297.5059169999987
+      },
+      "Q05": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 9742,
+        "ms": 117.13016700000267
+      },
+      "Q06": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 25328,
+        "ms": 256.5262910000001
+      },
+      "Q07": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 51845,
+        "ms": 548.8557090000015
+      },
+      "Q08": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 4750,
+        "ms": 32.94216699999808
+      },
+      "Q09": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 31296,
+        "ms": 200.79287499999765
+      },
+      "Q10": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 15508,
+        "ms": 106.75745800000058
+      },
+      "Q11": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 19402,
+        "ms": 15.566583999998329
+      },
+      "Q12": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 37374,
+        "ms": 6.315624999999159
+      }
+    },
+    "docdex": {
+      "Q01": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 810,
+        "ms": 797.3943330000006
+      },
+      "Q02": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 303,
+        "ms": 771.8247920000003
+      },
+      "Q03": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 902,
+        "ms": 710.9891659999992
+      },
+      "Q04": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 717,
+        "ms": 757.6876659999989
+      },
+      "Q05": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 872,
+        "ms": 661.4494999999998
+      },
+      "Q06": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 424,
+        "ms": 682.6483329999995
+      },
+      "Q07": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 102,
+        "ms": 631.7486250000002
+      },
+      "Q08": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 751,
+        "ms": 554.3948749999998
+      },
+      "Q09": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 822,
+        "ms": 455.877000000001
+      },
+      "Q10": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 881,
+        "ms": 370.8349999999996
+      },
+      "Q11": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 893,
+        "ms": 335.48362499999837
+      },
+      "Q12": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 297,
+        "ms": 110.86320799999783
+      }
+    },
+    "docdex-sem-x": {
+      "Q01": {
+        "hit1": false,
+        "hit3": true,
+        "answer_found": false,
+        "tokens": 893,
+        "ms": 161.20749999999973
+      },
+      "Q02": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 375,
+        "ms": 144.052125
+      },
+      "Q03": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 673,
+        "ms": 196.75104199999893
+      },
+      "Q04": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 716,
+        "ms": 154.0328750000004
+      },
+      "Q05": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 921,
+        "ms": 185.04379199999832
+      },
+      "Q06": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 423,
+        "ms": 143.96208299999813
+      },
+      "Q07": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 380,
+        "ms": 133.8144579999998
+      },
+      "Q08": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1039,
+        "ms": 166.24404199999887
+      },
+      "Q09": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 786,
+        "ms": 157.33129099999843
+      },
+      "Q10": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 563,
+        "ms": 163.75191700000258
+      },
+      "Q11": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 864,
+        "ms": 74.83687499999903
+      },
+      "Q12": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 406,
+        "ms": 59.20062499999901
+      }
+    },
+    "docdex-fuz": {
+      "Q01": {
+        "hit1": false,
+        "hit3": true,
+        "answer_found": false,
+        "tokens": 887,
+        "ms": 728.6993750000015
+      },
+      "Q02": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 817,
+        "ms": 742.949792000001
+      },
+      "Q03": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 920,
+        "ms": 590.41225
+      },
+      "Q04": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 707,
+        "ms": 663.9820840000006
+      },
+      "Q05": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 286,
+        "ms": 517.0512920000015
+      },
+      "Q06": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 896,
+        "ms": 632.6426670000025
+      },
+      "Q07": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 308,
+        "ms": 591.8002089999987
+      },
+      "Q08": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 755,
+        "ms": 481.7874169999996
+      },
+      "Q09": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 425,
+        "ms": 399.50525000000073
+      },
+      "Q10": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 887,
+        "ms": 241.44479099999927
+      },
+      "Q11": {
+        "hit1": true,
+        "hit3": true,
+        "answer_found": true,
+        "tokens": 898,
+        "ms": 122.21937500000024
+      },
+      "Q12": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 433,
+        "ms": 43.54629100000196
+      }
+    },
+    "docdex-sem": {
+      "Q01": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 897,
+        "ms": 194.30083399999987
+      },
+      "Q02": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 610,
+        "ms": 159.91924999999975
+      },
+      "Q03": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 920,
+        "ms": 202.5552079999997
+      },
+      "Q04": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 884,
+        "ms": 154.22391600000117
+      },
+      "Q05": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 859,
+        "ms": 162.47608400000146
+      },
+      "Q06": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 609,
+        "ms": 137.65720800000025
+      },
+      "Q07": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 828,
+        "ms": 121.66174999999768
+      },
+      "Q08": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 517,
+        "ms": 171.3367500000018
+      },
+      "Q09": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 559,
+        "ms": 153.79599999999982
+      },
+      "Q10": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 779,
+        "ms": 175.06737499999758
+      },
+      "Q11": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 511,
+        "ms": 41.13362500000051
+      },
+      "Q12": {
+        "hit1": false,
+        "hit3": false,
+        "answer_found": false,
+        "tokens": 1033,
+        "ms": 41.80054200000072
+      }
+    }
+  }
+}

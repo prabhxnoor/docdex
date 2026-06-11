@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.1 — 2026-06-11
+
+- **Hybrid semantic ranking.** `docdex semantic` now boosts embedding
+  similarity by the fraction of distinct query terms a chunk actually
+  contains. Pure cosine over hashed features rewarded vocabulary-soup
+  documents; chunks that really mention the query now rank on top.
+- **Reproducible value benchmark** (`benchmarks/`): deterministic corpus with
+  facts planted in Office/PDF files behind misleading filenames; measures
+  hit@1/hit@3, tokens-until-answer, and wall time for docdex vs. filename
+  browsing, raw grep, and read-everything baselines. Results in
+  `benchmarks/RESULTS.md`; headline 36× context reduction at 12/12 accuracy.
+- README: measured-value section and an explicit "Using docdex with an LLM"
+  walkthrough (agent session protocol, curation prompt, automation notes).
+
 ## 0.1.0 — 2026-06-11
 
 First packaged release. docdex is the productized, generic rewrite of an
