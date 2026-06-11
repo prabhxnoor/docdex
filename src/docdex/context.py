@@ -8,6 +8,7 @@ in the loop does the reasoning. No LLM is called here.
 """
 from __future__ import annotations
 
+import json
 import re
 from collections import OrderedDict
 from datetime import datetime
@@ -45,15 +46,36 @@ class EmptyTask(DocdexError):
     """Raised when a context task has no searchable terms."""
 
 
-def _is_scaffold(project: Project, rel: str) -> bool:
-    """docdex's own auto-generated instruction/READMEs are not user evidence —
-    they describe docdex, not the corpus, so they must never be cited as answers."""
+def _scaffold_rels(project: Project) -> tuple:
+    """docdex's own auto-generated instruction/READMEs — they describe docdex,
+    not the corpus."""
     idx = project.index_dir_name
-    return rel in (
+    return (
         "CLAUDE.md", "AGENTS.md",
         f"{idx}/HANDOFF.md", f"{idx}/00_MASTER_INDEX.md",
         f"{idx}/Update/README.md", f"{idx}/vision_notes/README.md",
     )
+
+
+def _scaffold_excludes(project: Project, inv_sha: dict) -> set:
+    """Scaffold files to hide from evidence — but only those still *unchanged*
+    from what `init` wrote. A user-edited CLAUDE.md is real content and must
+    surface like any other file (DDX-036). With no fingerprints (older projects),
+    fall back to excluding by name so scaffolds are never cited by accident."""
+    names = set(_scaffold_rels(project))
+    try:
+        fp = json.loads(project.scaffold_fingerprint_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        fp = {}
+    if not isinstance(fp, dict) or not fp:
+        return names
+    keep_hidden = set()
+    for rel in names:
+        stored, cur = fp.get(rel), inv_sha.get(rel)
+        if stored and cur and cur != stored:
+            continue                      # edited → treat as user content
+        keep_hidden.add(rel)
+    return keep_hidden
 
 
 def _candidates(project: Project, query: str, folder: Optional[str],
@@ -73,7 +95,7 @@ def _candidates(project: Project, query: str, folder: Optional[str],
     content = set(_content_terms(query))
 
     def keep(c: dict) -> bool:
-        if c["rel"] in skip or _is_scaffold(project, c["rel"]):
+        if c["rel"] in skip:
             return False
         # Match *existence* is decided by content-term overlap, never by the BM25
         # display score: a real hit whose score rounds to 0 (a term present in
@@ -219,13 +241,17 @@ def _pick_field_hit(hits: List[dict], label: str, extra_terms: set) -> Optional[
     return max(hits, key=utility)
 
 
-def _mtime_map(project: Project) -> dict:
-    """rel → mtime_iso, read once from the inventory (cheap; no corpus walk)."""
+def _read_inv(project: Project):
+    """(rows, error): rel → inventory row, or ({}, message) on corrupt inventory.
+
+    One read serves both the mtimes (evidence dates / conflict recency) and the
+    sha1s (the scaffold-fingerprint check). A corrupt inventory returns the error
+    so the packet warns loudly instead of looking healthy over broken state, and
+    never swallows the failure into an empty map (DDX-035)."""
     try:
-        return {rel: row.get("mtime_iso", "")
-                for rel, row in read_inventory(project.inventory_path).items()}
-    except DocdexError:
-        return {}
+        return (read_inventory(project.inventory_path), None)
+    except DocdexError as e:
+        return ({}, str(e))
 
 
 def _value_near(line: str, terms: set) -> str:
@@ -305,8 +331,13 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         terms = {t for label in form_fields for t in _content_terms(label)}
     else:
         terms = set(_content_terms(task))
-    mtimes = _mtime_map(project)
-    pool = _candidates(project, task, folder, pool=40, exclude=exclude)
+    inv_rows, state_err = _read_inv(project)
+    mtimes = {rel: row.get("mtime_iso", "") for rel, row in inv_rows.items()}
+    # Hide the form file and (only) *unchanged* scaffolds; an edited CLAUDE.md is
+    # real evidence and must surface (DDX-036).
+    skip = (exclude or set()) | _scaffold_excludes(
+        project, {rel: row.get("sha1", "") for rel, row in inv_rows.items()})
+    pool = _candidates(project, task, folder, pool=40, exclude=skip)
 
     # ---- Resolve each form field (retrieval only; budget applied when packing) ----
     resolved: List[dict] = []          # {label, has_value, line, hit|None}
@@ -318,7 +349,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         for label in form_fields:
             label_terms = label_tokens[label]
             foreign = all_label_tokens - label_terms   # other fields' label tokens
-            fhits = _candidates(project, label, folder, pool=6, exclude=exclude)
+            fhits = _candidates(project, label, folder, pool=6, exclude=skip)
             best = _pick_field_hit(fhits, label, label_terms)
             if not best:
                 resolved.append({"label": label, "has_value": False,
@@ -411,6 +442,10 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     pool_text = " ".join(c["text"] for c in pool).lower()
     missing_terms = [t for t in terms if t not in pool_text]
 
+    # A positive budget that the packed content already blew past must be flagged,
+    # in free-text mode too — not just silently over (DDX-033).
+    over_budget = budget_eff > 0 and used > budget_eff
+
     # ---- Coverage line ----
     if form_fields:
         cov = [f"{len(form_fields)} fields", f"{len(packed_found)} found",
@@ -426,16 +461,24 @@ def build_packet(project: Project, task: str, budget: int = 3000,
             cov.append("evidence truncated by budget")
         coverage = " · ".join(cov)
 
-    free = max(0, budget_eff - used)
     note = "" if tok.using_real_tokenizer() else " (≈ chars/4)"
+    budget_warn = "  ⚠ over budget" if over_budget else ""
     out = [
         "# context packet",
         f"Task: {task.strip()}",
         f"Coverage: {coverage}",
-        f"Budget: {requested} requested · ~{used} used{note} · {free} free",
-        f"Index: {_freshness(project, check_freshness)}",
+        # provisional — rewritten below against the real rendered token count.
+        f"Budget: {requested} requested · ~{used} used{note} · "
+        f"{max(0, requested - used)} free{budget_warn}",
+        (f"Index: unreadable — {state_err}; run `docdex sync` to rebuild"
+         if state_err else f"Index: {_freshness(project, check_freshness)}"),
         "",
     ]
+    budget_line_idx = 3
+    if state_err:
+        out += ["⚠ index state is unreadable, so dates and freshness are "
+                "unavailable and evidence may be incomplete — run `docdex sync` "
+                "to rebuild.", ""]
     if budget_eff <= 0:
         out += ["⚠ Budget is not positive — nothing was retrieved. "
                 "Rerun with e.g. --budget 2000.", ""]
@@ -476,7 +519,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
             out.append(f"- no index hits for: {', '.join(sorted(missing_terms))}")
         out.append("")
 
-    if dropped_fields or evidence_truncated or budget_eff <= 0:
+    if dropped_fields or evidence_truncated or budget_eff <= 0 or over_budget:
         bigger = max(2000, requested * 2) if requested > 0 else 2000
         out.append("## Dropped (budget)")
         if budget_eff <= 0:
@@ -486,7 +529,10 @@ def build_packet(project: Project, task: str, budget: int = 3000,
                 out.append(f"- {fld}: answer found but cut to fit the budget")
             if evidence_truncated:
                 out.append("- some supporting evidence was not packed")
-            out.append(f"- rerun with --budget {bigger} to include the above")
+            if over_budget:
+                out.append(f"- the packet is larger than the {requested}-token "
+                           "budget (kept the minimum to stay useful)")
+            out.append(f"- rerun with --budget {bigger} to fit it")
         out.append("")
 
     out.append("## Evidence")
@@ -520,6 +566,13 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         out.append(f"- engine: {engine}")
         out.append(f"- tokenizer: {'tiktoken' if tok.using_real_tokenizer() else 'chars/4 estimate'}")
 
+    # Token-exact accounting: report the budget against the *rendered* packet,
+    # not a component-sum estimate that undercounts what the agent receives.
+    rendered_used = tok.count_tokens("\n".join(out))
+    final_warn = "  ⚠ over budget" if requested > 0 and rendered_used > requested else ""
+    out[budget_line_idx] = (
+        f"Budget: {requested} requested · ~{rendered_used} used{note} · "
+        f"{max(0, requested - rendered_used)} free{final_warn}")
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -529,6 +582,7 @@ def parse_form_fields(text: str, limit: int = 200) -> List[str]:
     Unicode-aware (so 'Échéance' / 'Numéro fiscal' parse), and the cap is high
     enough that real forms are not silently truncated (DDX-020)."""
     fields: List[str] = []
+    counts: dict = {}
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
@@ -536,8 +590,12 @@ def parse_form_fields(text: str, limit: int = 200) -> List[str]:
         m = re.match(r"^[-*\d.)\s]*([^\W\d_][\w /&'()\-]{1,60}?)\s*[:_]", line, re.UNICODE)
         if m:
             label = m.group(1).strip()
-            if label and label.lower() not in (f.lower() for f in fields):
-                fields.append(label)
+            if label:
+                key = label.lower()
+                counts[key] = counts.get(key, 0) + 1
+                # Keep repeats so coverage matches the visible form, but
+                # disambiguate them into distinct answer lines (DDX-038).
+                fields.append(label if counts[key] == 1 else f"{label} #{counts[key]}")
         if len(fields) >= limit:
             break
     return fields

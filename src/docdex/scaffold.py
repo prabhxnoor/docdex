@@ -10,6 +10,7 @@ purge removes them and nothing else.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import stat
 from pathlib import Path
@@ -19,6 +20,7 @@ from docdex.config import (
     DEFAULT_INDEX_DIR, DEFAULT_WRAPPER, MARKER_NAME, NotAProject, Project,
     ensure_state_dirs,
 )
+from docdex.inventory import sha1_of
 
 WRAPPER_TEMPLATE = """#!/bin/sh
 # docdex wrapper — resolves this project's root regardless of cwd.
@@ -170,19 +172,33 @@ def run_init(root: Path, index_dir: str = DEFAULT_INDEX_DIR,
         "project_name": root.name, "index_dir": index_dir,
         "wrapper": wrapper or "ctx",
     }
-    _write_if_missing(project.index_dir / "HANDOFF.md", HANDOFF_TEMPLATE.format(**fmt))
-    _write_if_missing(project.index_dir / "00_MASTER_INDEX.md", MASTER_INDEX_STUB)
-    _write_if_missing(project.update_dir / "README.md", UPDATE_README)
-    _write_if_missing(project.notes_dir / "README.md", NOTES_README)
+    scaffold = [
+        (project.index_dir / "HANDOFF.md", HANDOFF_TEMPLATE.format(**fmt)),
+        (project.index_dir / "00_MASTER_INDEX.md", MASTER_INDEX_STUB),
+        (project.update_dir / "README.md", UPDATE_README),
+        (project.notes_dir / "README.md", NOTES_README),
+    ]
+    if agent_docs:
+        scaffold += [
+            (root / "CLAUDE.md", CLAUDE_MD_TEMPLATE.format(**fmt)),
+            (root / "AGENTS.md", AGENTS_MD_TEMPLATE.format(**fmt)),
+        ]
+    # Fingerprint only the files init actually wrote, so `context` can later tell
+    # an untouched scaffold (hide it) from a user-edited one (surface it) — DDX-036.
+    fingerprints = {}
+    for path, text in scaffold:
+        if _write_if_missing(path, text):
+            fingerprints[project.rel_to_root(path)] = sha1_of(path)
+    if fingerprints:
+        project.scaffold_fingerprint_path.write_text(
+            json.dumps(fingerprints, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
 
     if wrapper:
         wrapper_path = root / wrapper
         if not wrapper_path.exists():
             wrapper_path.write_text(WRAPPER_TEMPLATE, encoding="utf-8")
             _make_executable(wrapper_path)
-    if agent_docs:
-        _write_if_missing(root / "CLAUDE.md", CLAUDE_MD_TEMPLATE.format(**fmt))
-        _write_if_missing(root / "AGENTS.md", AGENTS_MD_TEMPLATE.format(**fmt))
 
     if not quiet:
         print(f"docdex project initialized at {root}")
