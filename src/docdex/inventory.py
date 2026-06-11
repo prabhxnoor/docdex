@@ -50,43 +50,60 @@ def stat_row(rel: str, abs_path: Path, do_hash: bool) -> Optional[dict]:
     }
 
 
-def read_inventory(path: Path) -> Dict[str, dict]:
-    rows: Dict[str, dict] = {}
-    if not path.exists():
-        return rows
+def _read_validated_tsv(path: Path, expected_header, label: str) -> list:
+    """Read a docdex TSV snapshot, failing friendly on corruption.
+
+    Raises StateError on NUL bytes, a header that doesn't match the expected
+    columns, or a ragged row — so a damaged state file is reported clearly
+    instead of being parsed into silently-wrong rows (or crashing the csv
+    module on an embedded NUL, which it does on Python ≤ 3.10 but not 3.11+).
+    Blank lines are tolerated. Returns a list of column→value dicts.
+    """
     try:
         with open(path, "r", encoding="utf-8", newline="") as f:
             text = f.read()
     except (OSError, UnicodeDecodeError) as e:
         raise StateError(
-            f"inventory is corrupt and could not be read ({e}). "
+            f"{label} is corrupt and could not be read ({e}). "
             "Run `docdex sync` to rebuild it.")
-    # NUL bytes are valid UTF-8 but never appear in a well-formed inventory, so
-    # treat them as corruption. We check explicitly because Python's csv module
-    # raised on embedded NUL through 3.10 but silently accepts it from 3.11+ —
-    # without this guard, a corrupt inventory would parse into garbage rows on
-    # newer interpreters instead of failing cleanly.
     if "\x00" in text:
         raise StateError(
-            "inventory is corrupt (contains NUL bytes). "
+            f"{label} is corrupt (contains NUL bytes). "
             "Run `docdex sync` to rebuild it.")
     try:
         reader = csv.reader(io.StringIO(text), delimiter="\t")
         try:
             header = next(reader)
         except StopIteration:
-            return rows
+            return []
+        if header != list(expected_header):
+            raise StateError(
+                f"{label} header does not match the expected format. "
+                "Run `docdex sync` to rebuild it.")
+        out = []
         for parts in reader:
+            if not any(field.strip() for field in parts):
+                continue  # tolerate blank lines
             if len(parts) != len(header):
-                continue
-            row = dict(zip(header, parts))
-            row.setdefault("mtime_iso", "")
-            row.setdefault("sha1", "")
-            rows[row["path"]] = row
+                raise StateError(
+                    f"{label} has a malformed row ({len(parts)} of "
+                    f"{len(header)} columns). Run `docdex sync` to rebuild it.")
+            out.append(dict(zip(header, parts)))
+        return out
     except csv.Error as e:
         raise StateError(
-            f"inventory is corrupt and could not be read ({e}). "
+            f"{label} is corrupt and could not be read ({e}). "
             "Run `docdex sync` to rebuild it.")
+
+
+def read_inventory(path: Path) -> Dict[str, dict]:
+    rows: Dict[str, dict] = {}
+    if not path.exists():
+        return rows
+    for row in _read_validated_tsv(path, HEADER, "inventory"):
+        row.setdefault("mtime_iso", "")
+        row.setdefault("sha1", "")
+        rows[row["path"]] = row
     return rows
 
 
@@ -120,11 +137,9 @@ def read_extract_status(project: Project) -> Dict[str, dict]:
     path = project.extract_status_path
     if not path.exists():
         return rows
-    with open(path, "r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        for row in reader:
-            if row.get("path"):
-                rows[row["path"]] = dict(row)
+    for row in _read_validated_tsv(path, STATUS_HEADER, "extract_status"):
+        if row.get("path"):
+            rows[row["path"]] = row
     return rows
 
 

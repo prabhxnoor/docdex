@@ -15,6 +15,7 @@ Tables:
 from __future__ import annotations
 
 import sqlite3
+import time
 from typing import List, Optional
 
 from docdex import tokens as tok
@@ -30,6 +31,44 @@ def connect(project: Project) -> sqlite3.Connection:
     conn = sqlite3.connect(str(project.index_db_path))
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _quarantine_corrupt_db(project: Project) -> Optional[str]:
+    """Move a corrupt index.db aside so a fresh one can be rebuilt from caches."""
+    db = project.index_db_path
+    if not db.exists():
+        return None
+    dest = db.parent / f"{db.name}.corrupt.{time.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        db.rename(dest)
+        return dest.name
+    except OSError:
+        try:
+            db.unlink()
+        except OSError:
+            pass
+        return None
+
+
+def _open_for_build(project: Project, quiet: bool = False) -> sqlite3.Connection:
+    """Connect, verifying the file is a real SQLite database.
+
+    A corrupt or non-SQLite `index.db` makes the first statement raise
+    `sqlite3.DatabaseError`. Rather than crash `sync` with a raw traceback, we
+    move the bad file aside and return a fresh connection — the index then
+    rebuilds from the `.txt` caches (the source of truth) on this same run.
+    """
+    conn = connect(project)
+    try:
+        conn.execute("PRAGMA schema_version")  # reads the DB header
+        return conn
+    except sqlite3.DatabaseError:
+        conn.close()
+        moved = _quarantine_corrupt_db(project)
+        if not quiet:
+            where = f" (saved as {moved})" if moved else ""
+            print(f"Lexical index: index.db was corrupt; rebuilding from caches{where}")
+        return connect(project)
 
 
 def fts5_available(conn: sqlite3.Connection) -> bool:
@@ -67,7 +106,7 @@ def _init_schema(conn: sqlite3.Connection, has_fts: bool) -> None:
 
 def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
     inventory = read_inventory(project.inventory_path)
-    conn = connect(project)
+    conn = _open_for_build(project, quiet=quiet)
     try:
         has_fts = fts5_available(conn)
         _init_schema(conn, has_fts)

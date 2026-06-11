@@ -71,6 +71,10 @@ foundation is solid enough to build them safely.
   search even at 50k files); the auditor found **1 critical + 7 major** issues,
   all feeding the v0.3 plan below. Headline verdict: *"the engine is good; the gap
   is task awareness — coverage, budgets, conflicts, follow-up signalling."*
+- **v0.2.1 — "Trust & robustness"** (2026-06-11): closed **Phase 1** of the audit
+  — the symlink index-escape (DDX-015), corrupt-DB self-heal (DDX-016), state-
+  reader hardening (DDX-017), dead-PID lock recovery (DDX-021), large-file cap
+  (DDX-022), and the minors. 98 tests (16 new regressions mirroring the repros).
 
 ---
 
@@ -80,22 +84,22 @@ Theme: **make the packet trustworthy and task-aware.** The engine already scales
 v0.3 closes the trust blockers, makes `context` honest about coverage/budget and
 fast at scale, then adds the cheapest recall wins. Build in this order:
 
-**Phase 1 — Trust blockers (pure bug-fixes; ship first, no design debate).**
-- ⬜ **DDX-015 [CRITICAL]** — a symlink named as `index_dir` still writes state
-  *outside* the project. Resolve `index_dir` through symlinks and reject any path
-  that lands outside root, at every init/sync write.
-- ⬜ **DDX-016 [MAJOR]** — a corrupt `index.db` crashes `sync` with a raw
-  traceback. Catch it, quarantine the file, rebuild from caches (or fail friendly).
-- ⬜ **DDX-017 [MAJOR]** — finish state-reader hardening: the NUL/header/row checks
-  `read_inventory` got must also cover `extract_status.tsv` and the semantic
-  manifests; a ragged inventory must error, not silently read as zero rows.
-- ⬜ **DDX-021 [MAJOR]** — a `SIGKILL`-ed sync leaves a 30-minute blocking lock;
-  record host/PID and recover immediately if the PID is dead.
-- ⬜ **DDX-022 [MAJOR]** — one huge text file balloons the index (310 MB source →
-  742 MB state); add a `max_extract_bytes` cap with `--allow-large-text`.
-- ⬜ **DDX-023/024/025/026 [MINOR]** — `search` before first sync should say "run
-  sync", not "no match"; restrict `index_dir` to a safe slug (reject `~`/newline);
-  reconcile or document hand-edited caches; add the `context` workflow to `AGENTS.md`.
+**Phase 1 — Trust blockers — ✅ shipped in v0.2.1.**
+- ✅ **DDX-015 [CRITICAL]** — a symlinked `index_dir` can no longer steer writes
+  (or a later `purge`) outside the project; refused at every init/sync write.
+- ✅ **DDX-016 [MAJOR]** — a corrupt `index.db` is quarantined and rebuilt from the
+  caches instead of crashing `sync`.
+- ✅ **DDX-017 [MAJOR]** — NUL/header/row validation now covers `extract_status.tsv`
+  and the semantic manifest/meta; a ragged inventory errors instead of being read
+  as zero rows. *(The `semantic_index.jsonl` read path already skips bad lines;
+  full per-line hardening tracked for v0.3.)*
+- ✅ **DDX-021 [MAJOR]** — a killed sync is recovered immediately via a dead-PID
+  check instead of blocking for 30 minutes.
+- ✅ **DDX-022 [MAJOR]** — `max_extract_mb` (default 50) records oversize files as
+  `skipped`; `--allow-large-text` overrides.
+- ✅ **DDX-023/024/025/026 [MINOR]** — `search` before first sync says "run sync";
+  `index_dir` rejects `~`/control chars (spaces still allowed); hand-edited caches
+  documented; `AGENTS.md` teaches the `context` workflow.
 
 **Phase 2 — Make the product honest and fast (the packet itself).**
 - ⬜ **DDX-019 [MAJOR]** — `context` does an O(files) freshness walk every call

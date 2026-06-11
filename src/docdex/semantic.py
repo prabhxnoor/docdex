@@ -12,7 +12,6 @@ streamed through untouched.
 """
 from __future__ import annotations
 
-import csv
 import hashlib
 import json
 import math
@@ -22,7 +21,7 @@ import subprocess
 from typing import Dict, Iterator, List, Optional, Tuple
 
 from docdex.config import DocdexError, Project, StateError
-from docdex.inventory import read_inventory, write_tsv
+from docdex.inventory import _read_validated_tsv, read_inventory, write_tsv
 from docdex.search import tokenize
 
 DIM = 384
@@ -142,10 +141,12 @@ def _read_manifest(project: Project) -> Dict[str, dict]:
     path = project.semantic_manifest_path
     if not path.exists():
         return rows
-    with open(path, "r", encoding="utf-8", newline="") as f:
-        for row in csv.DictReader(f, delimiter="\t"):
+    try:
+        for row in _read_validated_tsv(path, MANIFEST_HEADER, "semantic_manifest"):
             if row.get("path"):
-                rows[row["path"]] = dict(row)
+                rows[row["path"]] = row
+    except StateError:
+        return {}  # corrupt incremental cache → a full re-embed rebuilds it
     return rows
 
 
@@ -302,5 +303,8 @@ def status(project: Project) -> Optional[dict]:
     if not project.semantic_index_path.exists():
         return None
     if project.semantic_meta_path.exists():
-        return json.loads(project.semantic_meta_path.read_text(encoding="utf-8"))
+        try:
+            return json.loads(project.semantic_meta_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            return {"backend": "unknown"}
     return {"backend": "unknown"}

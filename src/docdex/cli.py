@@ -103,7 +103,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
     print("[2/6] sync inventory + text caches")
     try:
         run_sync(project, dry_run=args.dry_run, no_hash=args.no_hash,
-                 no_extract=args.no_extract, backfill=args.backfill)
+                 no_extract=args.no_extract, backfill=args.backfill,
+                 allow_large=args.allow_large_text)
     except SyncLocked as e:
         raise SystemExit(f"docdex: {e}")
     if args.dry_run:
@@ -129,6 +130,9 @@ def cmd_search(args: argparse.Namespace) -> int:
     from docdex import index_db
     from docdex.search import run_search, snippet, tokenize
     project = _project(args)
+    if not project.inventory_path.exists():
+        print("docdex: index not built — run `docdex sync` first", file=sys.stderr)
+        return 2
     terms = tokenize(args.query)
     if not terms:
         print("query has no searchable terms", file=sys.stderr)
@@ -163,6 +167,9 @@ def cmd_search(args: argparse.Namespace) -> int:
 def cmd_semantic(args: argparse.Namespace) -> int:
     from docdex import semantic
     project = _project(args)
+    if not project.inventory_path.exists():
+        print("docdex: index not built — run `docdex sync` first", file=sys.stderr)
+        return 2
     try:
         hits = semantic.search(project, args.query, folder=args.folder, limit=args.limit)
     except semantic.EmptyQuery as e:
@@ -318,6 +325,8 @@ def main(argv=None) -> int:
     p.add_argument("--no-hash", action="store_true", help="mtime+size only (no rename detection)")
     p.add_argument("--no-extract", action="store_true", help="inventory only")
     p.add_argument("--backfill", action="store_true", help="re-extract anything lacking a cache")
+    p.add_argument("--allow-large-text", action="store_true",
+                   help="extract supported text files larger than the size cap")
     p.add_argument("--no-prefetch", action="store_true", help="skip cloud placeholder prefetch")
     p.add_argument("--no-fts", action="store_true", help="skip the SQLite/FTS5 lexical index")
     p.add_argument("--no-dumps", action="store_true", help="skip context dumps")

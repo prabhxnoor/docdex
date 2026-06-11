@@ -233,14 +233,22 @@ The scaffolded `CLAUDE.md` teaches agents to escalate through tiers and stop as 
 
 ## Semantic search, honestly
 
-The default backend (`local-hash-v1`) is a deterministic hashed-feature embedding over words, bigrams, and character n-grams: private, dependency-free, surprisingly effective at narrowing candidates — but it is *not* a neural model. For real embeddings, point `DOCDEX_EMBED_CMD` at any command that reads text on stdin and prints a JSON float array:
+The default backend (`local-hash-v1`) is a deterministic hashed-feature embedding over words, bigrams, and character n-grams: private, dependency-free, and useful for narrowing candidates — but it is *not* a neural model, so it can't match by meaning across different words ("legal name" won't find "Vendor"). True meaning-based retrieval needs a real embedding model, which you opt into via `DOCDEX_EMBED_CMD` — any command that reads text on stdin and prints a JSON float array.
+
+> ⚠️ **Privacy — keep it local.** That command receives your document text. A **local** model keeps everything on your machine; a **cloud** embedding API (OpenAI, etc.) sends your corpus text to that provider. Point `DOCDEX_EMBED_CMD` only at something local unless you've explicitly accepted that trade-off. It runs via the shell, so only use a command you trust.
 
 ```bash
-export DOCDEX_EMBED_CMD="my-embed-cli --model text-embedding-3-small"
+# A LOCAL embedder — text in on stdin, a JSON float array out, no network.
+#   embed.py:
+#     import sys, json
+#     from sentence_transformers import SentenceTransformer
+#     m = SentenceTransformer("all-MiniLM-L6-v2")   # downloaded once, runs locally
+#     print(json.dumps(m.encode(sys.stdin.read()).tolist()))
+export DOCDEX_EMBED_CMD="python3 /path/to/embed.py"
 docdex embed --force   # rebuild under the new backend
 ```
 
-Rebuilds are incremental either way: only files whose content hash changed get re-embedded.
+Use the **same** model for indexing and querying (mixing two gives nonsense), and re-run `docdex embed --force` when you switch. Rebuilds are otherwise incremental: only files whose content hash changed get re-embedded. Today this powers `semantic`; fusing it into the `context` packet is on the [roadmap](ROADMAP.md).
 
 ## Vision / OCR workflow
 
@@ -268,8 +276,9 @@ Drop new files anywhere (or into `_index/Update/` if you haven't decided where t
 ## Performance notes & honest limits
 
 - Comfortable for corpora up to roughly **10,000 files** end-to-end (the FTS5 `search` engine itself stays fast well past that — see the indexing-time table under [What to keep in mind](#what-to-keep-in-mind-install--index--use--uninstall)). The first full extraction is the only slow run; warm re-syncs are incremental.
-- Files ≥ 200 MB are inventoried but not hashed (no rename detection for them). A supported text file is still fully extracted into a cache regardless of size, so a single enormous text file produces an equally large cache — keep such files out via `skip_dirs` or a dedicated folder if that matters.
+- Files ≥ 200 MB are inventoried but not hashed (no rename detection for them). A supported file larger than **`max_extract_mb` (default 50 MB)** is recorded as `skipped` rather than extracted, so one giant log/export can't balloon the index. Raise `max_extract_mb` in `.docdex.json` (or `0` to disable the cap), or pass `docdex sync --allow-large-text`, to index it anyway.
 - Keyword `search` runs on the SQLite **FTS5/BM25** index, so its latency is effectively **flat as the corpus grows** (~36 ms median even at 50k files in the v0.2 audit). Only the no-FTS5 fallback scans caches linearly.
+- The `index.db` is rebuilt from your **source** files (via their `.txt` caches). If you ever hand-edit a cache directly, delete `index.db` and re-sync so the edit is picked up.
 - `docdex context` is the exception today: it does a full freshness walk per call, so on very large corpora it's slower than raw `search` (a known v0.3 fix — see the [roadmap](ROADMAP.md)). Run `docdex status` once per session and keep budgets sensible.
 - Semantic search scans the index linearly per query — simple and dependable, a few seconds on large corpora. If you outgrow it, plug in an external embedding backend or a real vector store.
 - Encrypted, corrupted, or image-only files are recorded in `extract_status.tsv` (`failed` / `empty`) instead of being silently retried forever — `status` reports them separately from real gaps.

@@ -11,8 +11,10 @@ separately from real cache gaps — they are vision/OCR candidates, not errors.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import socket
 import time
 from pathlib import Path
 from typing import Dict, Optional
@@ -32,19 +34,58 @@ class SyncLocked(Exception):
     pass
 
 
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # process exists but is owned by another user
+    except OSError:
+        return False
+    return True
+
+
+def _lock_payload() -> str:
+    return json.dumps({"pid": os.getpid(), "host": socket.gethostname(),
+                       "ts": time.time()})
+
+
+def _lock_is_reclaimable(lock: Path) -> bool:
+    """True if an existing lock can be safely taken over: its owning process is
+    gone on this host, or (fallback) the lock has aged past the stale timeout.
+
+    The PID check makes an interrupted sync (SIGKILL/crash) recover on the very
+    next run instead of blocking for 30 minutes; a lock from another host or an
+    older docdex (which wrote just a PID number) falls back to the age check.
+    """
+    try:
+        info = json.loads(lock.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        info = None
+    if isinstance(info, dict) and info.get("host") == socket.gethostname():
+        pid = info.get("pid")
+        if isinstance(pid, int) and not _pid_alive(pid):
+            return True
+    try:
+        return time.time() - lock.stat().st_mtime > LOCK_STALE_SECONDS
+    except OSError:
+        return False
+
+
 def acquire_lock(project: Project) -> bool:
     lock = project.lock_path
     if lock.exists():
-        try:
-            if time.time() - lock.stat().st_mtime > LOCK_STALE_SECONDS:
+        if _lock_is_reclaimable(lock):
+            try:
                 lock.unlink()
-            else:
+            except OSError:
                 return False
-        except OSError:
+        else:
             return False
     try:
         lock.parent.mkdir(parents=True, exist_ok=True)
-        lock.write_text(str(os.getpid()), encoding="utf-8")
+        lock.write_text(_lock_payload(), encoding="utf-8")
         return True
     except OSError:
         return False
@@ -67,11 +108,14 @@ def cache_has_text(dest: Path) -> bool:
 class _Extractor:
     """Extraction with status bookkeeping for one sync run."""
 
-    def __init__(self, project: Project, statuses: Dict[str, dict]):
+    def __init__(self, project: Project, statuses: Dict[str, dict],
+                 allow_large: bool = False):
         self.project = project
         self.statuses = statuses
+        self.allow_large = allow_large
         self.error_lines: list = []
-        self.counts = {"ok": 0, "empty": 0, "failed": 0, "unsupported": 0}
+        self.counts = {"ok": 0, "empty": 0, "failed": 0, "unsupported": 0,
+                       "skipped": 0}
 
     def _record(self, rel: str, status: str, chars: int = 0, detail: str = "") -> None:
         self.statuses[rel] = {
@@ -84,6 +128,18 @@ class _Extractor:
         if not ex.is_supported(abs_path):
             self._record(rel, "unsupported", detail=abs_path.suffix.lower())
             return
+        cap = self.project.max_extract_bytes
+        if cap and not self.allow_large:
+            try:
+                size = abs_path.stat().st_size
+            except OSError:
+                size = 0
+            if size > cap:
+                self._record(
+                    rel, "skipped",
+                    detail=f"{size // (1024 * 1024)} MB > {cap // (1024 * 1024)} MB "
+                           "cap (raise max_extract_mb or use --allow-large-text)")
+                return
         dest = self.project.cache_path_for(rel)
         if not force:
             try:
@@ -144,14 +200,16 @@ def stale_topical_report(changed_paths, project: Project) -> dict:
 
 def run_sync(project: Project, dry_run: bool = False, no_hash: bool = False,
              no_extract: bool = False, backfill: bool = False,
-             quiet: bool = False) -> dict:
+             allow_large: bool = False, quiet: bool = False) -> dict:
     if not dry_run:
         ensure_state_dirs(project)
         if not acquire_lock(project):
-            raise SyncLocked(f"another sync appears to be running ({project.lock_path})")
+            raise SyncLocked(
+                "another sync appears to be running. If you're sure none is, "
+                f"delete the lock file: {project.lock_path}")
 
     statuses = read_extract_status(project)
-    extractor = _Extractor(project, statuses)
+    extractor = _Extractor(project, statuses, allow_large=allow_large)
     try:
         old = read_inventory(project.inventory_path)
         old_by_sha: Dict[str, list] = {}
@@ -245,7 +303,8 @@ def run_sync(project: Project, dry_run: bool = False, no_hash: bool = False,
                 print(f"  {key:<11} : {totals[key]}")
             exc = extractor.counts
             print(f"  extracted   : ok={exc['ok']} empty={exc['empty']} "
-                  f"failed={exc['failed']} unsupported={exc['unsupported']}")
+                  f"failed={exc['failed']} unsupported={exc['unsupported']} "
+                  f"skipped={exc['skipped']}")
             if stale:
                 print("\nTopical files to review (mention a changed folder):")
                 for fname, folders in sorted(stale.items()):
@@ -271,7 +330,8 @@ def _write_last_run(project: Project, totals: dict) -> None:
         f"Renamed: {totals['renamed']}, Unchanged: {totals['unchanged']}, "
         f"Deleted: {totals['deleted']}",
         f"Extraction: ok={exc['ok']}, empty={exc['empty']}, "
-        f"failed={exc['failed']}, unsupported={exc['unsupported']}",
+        f"failed={exc['failed']}, unsupported={exc['unsupported']}, "
+        f"skipped={exc.get('skipped', 0)}",
         "",
     ]
     if totals["stale_topicals"]:
@@ -309,6 +369,8 @@ def compute_status(project: Project) -> dict:
             no_text.append(rel)
         elif status == "failed":
             failed.append(rel)
+        elif status == "skipped":
+            continue  # intentionally not extracted (too large) — not a gap
         elif not cache.exists():
             missing_cache.append(rel)
 

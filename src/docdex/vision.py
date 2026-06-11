@@ -17,7 +17,7 @@ from typing import Set
 
 from docdex import extract as ex
 from docdex.config import NOTES_DIR, Project, _truncate_utf8
-from docdex.inventory import read_inventory
+from docdex.inventory import read_extract_status, read_inventory
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp", ".gif", ".bmp"}
 LOW_TEXT_THRESHOLD = 300
@@ -141,11 +141,15 @@ def create_queue(project: Project, quiet: bool = False) -> dict:
 
     scaffold = {f"{project.index_dir_name}/{NOTES_DIR}/README.md",
                 f"{project.index_dir_name}/Update/README.md"}
+    statuses = read_extract_status(project)
     rows = []
     for rel in read_inventory(project.inventory_path):
         if rel in done or rel.startswith(notes_prefix) or rel in scaffold:
             continue
+        if statuses.get(rel, {}).get("status") == "skipped":
+            continue  # too large to extract — not a vision/OCR candidate
         ext = Path(rel).suffix.lower()
+
         reason = ""
         assets = []
         if ext in IMAGE_EXTS:

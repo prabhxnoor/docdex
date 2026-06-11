@@ -120,11 +120,15 @@ Quick reference:
 
 - `./{wrapper} status` — freshness; sync first if stale.
 - `./{wrapper} sync` — reindex incrementally.
-- `./{wrapper} search "words"` / `./{wrapper} semantic "description"` — retrieval.
+- `./{wrapper} context "the task" --budget N` — **preferred:** a cited,
+  token-budgeted evidence packet (answers, excerpts, what's missing). For a
+  form, `./{wrapper} context --from-file form.md`.
+- `./{wrapper} search "words"` / `./{wrapper} semantic "description"` — drill into
+  specific snippets when `context` leaves a gap.
 - `./{wrapper} doctor` — integrity checks.
 
-Load curated summaries before raw files; ask targeted questions instead of
-guessing; never move the user's source files.
+Prefer `context` over reading files; load curated summaries before raw files;
+ask targeted questions instead of guessing; never move the user's source files.
 """
 
 

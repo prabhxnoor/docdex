@@ -34,6 +34,12 @@ SKIP_FILE_NAMES = {".DS_Store", "Thumbs.db", "desktop.ini", "Icon\r"}
 # unique. 140 bytes leaves headroom under common 255-byte filename limits.
 MAX_STEM_BYTES = 140
 
+# Default per-file extraction cap (MB). A supported text file larger than this
+# is recorded as `skipped` rather than extracted, so one giant log/export can't
+# balloon the index. Override per-project via `max_extract_mb`, or per-run with
+# `--allow-large-text`. Set `max_extract_mb` to 0 to disable the cap.
+DEFAULT_MAX_EXTRACT_MB = 50
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -76,6 +82,12 @@ def validate_index_dir(name: str) -> str:
     if "/" in name or "\\" in name or "\x00" in name:
         raise ConfigError(
             f"index_dir must be a plain folder name, not a path: {name!r}")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
+        raise ConfigError(
+            f"index_dir may not contain control characters: {name!r}")
+    if "~" in name:
+        raise ConfigError(
+            f"index_dir may not contain '~' (home expansion): {name!r}")
     if PurePosixPath(name).is_absolute() or Path(name).is_absolute():
         raise ConfigError(f"index_dir must be relative, not absolute: {name!r}")
     return name
@@ -102,6 +114,15 @@ class Project:
         except OSError:
             return False
         return resolved == self.root or self.root in resolved.parents
+
+    @property
+    def max_extract_bytes(self) -> int:
+        """Per-file extraction cap in bytes (0 = no cap)."""
+        try:
+            mb = int(self.config.get("max_extract_mb", DEFAULT_MAX_EXTRACT_MB))
+        except (TypeError, ValueError):
+            mb = DEFAULT_MAX_EXTRACT_MB
+        return max(0, mb) * 1024 * 1024
 
     # ---------------------------------------------------------------- layout
     @property
@@ -274,6 +295,20 @@ class Project:
 
 
 def ensure_state_dirs(project: Project) -> None:
+    # Boundary guard (defense in depth): even though the name passed validation,
+    # refuse to write if the index dir itself is a symlink or otherwise resolves
+    # outside the project root. A pre-planted symlink named as the index dir
+    # could otherwise steer every `_state/` write — and later `purge` — outside
+    # the project. The source files are never touched regardless.
+    idx = project.index_dir
+    if idx.is_symlink():
+        raise ConfigError(
+            f"index dir {project.index_dir_name!r} is a symlink; refusing to "
+            "write through it (it could point outside the project)")
+    if idx.exists() and not project.is_within_root(idx):
+        raise ConfigError(
+            f"index dir {project.index_dir_name!r} resolves outside the project "
+            "root; refusing to write")
     for d in (
         project.index_dir, project.update_dir, project.notes_dir,
         project.state_dir, project.extracted_dir, project.dumps_dir,

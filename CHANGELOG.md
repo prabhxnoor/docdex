@@ -10,25 +10,63 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
+Nothing yet. Next up is v0.3 Phase 2 — making the `context` packet honest about
+coverage and budget, and fast on large corpora. See [ROADMAP.md](ROADMAP.md).
+
+## [0.2.1] — 2026-06-11 — "Trust & robustness"
+
+Closes the trust and robustness findings from the independent v0.2.0 audit
+(Phase 1 of the v0.3 plan). One was a real safety hole; the rest stop a
+foreseeable corrupt file or interrupted run from crashing or quietly misleading
+the tool. 98 tests now (up from 82) — 16 new ones reproduce each finding below
+before asserting the fix.
+
+### Security
+
+- **The index can no longer escape the project through a symlink.** If the index
+  folder is — or is swapped for — a symlink pointing outside the project, docdex
+  refuses to write rather than putting its state (and a later `purge`) somewhere
+  outside. *In plain terms:* a leftover or planted shortcut named like the index
+  folder used to let docdex write outside your project; that's blocked now. Index
+  folder names are also tightened (no `~`, tabs, or newlines — spaces are still
+  fine). (Audit findings DDX-015, DDX-025.)
+
 ### Fixed
 
-- **Corrupt-inventory detection now works the same on every Python version.** A
-  damaged inventory file containing binary junk (NUL bytes) is reliably reported
-  as corrupt instead of being parsed into garbage rows. *In plain terms:* Python
-  3.11+ quietly changed how it handles a certain kind of corrupt data, which made
-  one safety check pass on older Python but slip through on newer Python (and
-  turned the test suite red on GitHub). docdex now checks for itself rather than
-  relying on Python's behaviour, so the check is solid everywhere.
+- **A corrupted index database self-heals instead of crashing.** If `index.db`
+  gets damaged, `sync` now sets the bad file aside and rebuilds it from the text
+  caches instead of stopping with a Python error. (DDX-016.)
+- **Every state file fails with a clear message when corrupt.** The NUL-byte and
+  format checks now cover the extraction-status file too, and reject ragged or
+  garbled rows, so a damaged file says "run sync to rebuild" instead of crashing
+  or being silently read as empty. This also makes corrupt-file detection behave
+  the same on every Python version (Python 3.11+ had quietly changed the
+  behaviour the old check relied on, which turned the test suite red on GitHub).
+  (DDX-017, DDX-008.)
+- **An interrupted sync recovers immediately.** If a sync is killed, the next run
+  notices the previous process is gone and takes over at once, instead of
+  refusing for 30 minutes. (DDX-021.)
+- **`search` before the first sync now says "run sync first"** (a clear error)
+  instead of the misleading "no matches". (DDX-024.)
+
+### Added
+
+- **A size cap so one huge file can't bloat the index.** A supported file larger
+  than `max_extract_mb` (default 50 MB) is recorded as `skipped` rather than
+  extracted; raise `max_extract_mb` in `.docdex.json` (or set `0` to disable), or
+  pass `docdex sync --allow-large-text`, to index it anyway. *In plain terms:* a
+  stray multi-hundred-MB log or export used to balloon the index to several times
+  its size; now it's skipped with a note. (DDX-022.)
 
 ### Docs
 
-- New top-level **[ROADMAP.md](ROADMAP.md)** — the living plan (what shipped, what's
-  next, and the open design questions), kept up to date across releases.
-- README now states plainly **what docdex is and isn't** — a context provider for
-  an AI agent, not a desktop/OS search engine.
-
-See [ROADMAP.md](ROADMAP.md) for what's planned next (retrieval quality, conflict/
-recency awareness, index lifecycle, adaptive budgets, Windows support).
+- New living **[ROADMAP.md](ROADMAP.md)**; README states plainly what docdex is
+  and isn't (a context provider for an agent, not an OS search engine) and adds a
+  full **install → index → use → uninstall** guide — including that indexing is
+  100% deterministic, so the AI model and effort setting make no difference to
+  it. The embedding-model example is now **local-only with a privacy warning**,
+  and the scaffolded `AGENTS.md` teaches the `context` workflow. (DDX-010, DDX-013,
+  DDX-023, DDX-026.)
 
 ## [0.2.0] — 2026-06-11 — "Trust & Context Foundations"
 
