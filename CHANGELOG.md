@@ -53,6 +53,14 @@ lands; nothing here has shipped in a tagged release yet.
   SQLite happens to lack FTS5. (Audit finding DDX-007.)
 - Per-chunk **token counting** (uses `tiktoken` when installed, a chars/4
   estimate otherwise) — groundwork for token-budgeted context (see plan).
+- **A form-filling benchmark** (`benchmarks/task_benchmark.py`) that measures the
+  thing the tool is really for: how much of a multi-field job's context each
+  approach delivers per token. `docdex context` got ~73% of the answerable
+  fields at ~7% of a naive search loop's token cost, and — unlike the
+  alternatives — correctly reported the one absent field as "not found" instead
+  of forcing a guess. *In plain terms:* a measured, honest demonstration that
+  asking docdex for task context beats reading files, with the misses explained
+  rather than hidden.
 
 ### Fixed
 

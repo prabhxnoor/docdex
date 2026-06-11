@@ -1,0 +1,44 @@
+{
+  "files": 115,
+  "findable": 11,
+  "absent": 1,
+  "full_tokens": 30567,
+  "results": {
+    "read-all (budget)": {
+      "covered": [],
+      "tokens": 135
+    },
+    "search-loop": {
+      "covered": [
+        "Legal name",
+        "GST number",
+        "PAN",
+        "Registered address",
+        "Liability cap",
+        "Payment terms",
+        "Governing law",
+        "Renewal term",
+        "Primary contact email",
+        "Annual contract value",
+        "Effective date"
+      ],
+      "tokens": 20228
+    },
+    "docdex context": {
+      "covered": [
+        "GST number",
+        "PAN",
+        "Registered address",
+        "Liability cap",
+        "Payment terms",
+        "Primary contact email",
+        "Annual contract value",
+        "Effective date"
+      ],
+      "tokens": 1464,
+      "honest_absent": [
+        "Bank IFSC"
+      ]
+    }
+  }
+}

@@ -13,7 +13,7 @@ from typing import List, Optional
 from docdex import index_db
 from docdex import tokens as tok
 from docdex.config import DocdexError, Project
-from docdex.search import run_search, tokenize
+from docdex.search import run_search, snippet, tokenize
 
 # Lines that look like they carry a concrete value are the best "likely answer"
 # candidates. Conservative on purpose — the agent confirms; we only surface.
@@ -79,6 +79,23 @@ def _content_terms(task: str) -> List[str]:
     return [t for t in tokenize(task) if len(t) >= 4 and t not in STOPWORDS]
 
 
+def _pick_field_hit(hits: List[dict], label: str, extra_terms: set) -> Optional[dict]:
+    """Rerank a field's candidates by task utility, not raw relevance: prefer a
+    chunk that actually carries a value and covers the field's words, over a
+    higher-BM25 chunk that merely shares vocabulary with the field label."""
+    if not hits:
+        return None
+    label_terms = set(tokenize(label))
+
+    def utility(h: dict):
+        low = h["text"].lower()
+        has_value = 1 if _value_lines(h["text"], label_terms | extra_terms) else 0
+        coverage = sum(1 for t in label_terms if t in low)
+        return (has_value, coverage, h["score"])
+
+    return max(hits, key=utility)
+
+
 def _freshness(project: Project) -> str:
     from docdex.sync import compute_status
     if not project.inventory_path.exists():
@@ -108,11 +125,12 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     pinned = set()              # (rel, chunk) that must survive the score floor
     if form_fields:
         for label in form_fields:
-            fhits = _candidates(project, label, folder, pool=3)
-            best = fhits[0] if fhits else None
+            fhits = _candidates(project, label, folder, pool=6)
+            best = _pick_field_hit(fhits, label, terms)
             if best:
                 vlines = _value_lines(best["text"], set(tokenize(label)) | terms)
-                line = vlines[0] if vlines else _trim(best["text"], 160)
+                line = vlines[0] if vlines else snippet(
+                    best["text"], label, tokenize(label), width=160)
                 fields_report.append((label, line, f"{best['rel']} ·{best['chunk']}"))
                 pool.append(best)
                 pinned.add((best["rel"], best["chunk"]))
@@ -137,7 +155,9 @@ def build_packet(project: Project, task: str, budget: int = 3000,
             continue
         if per_source.get(cand["rel"], 0) >= MAX_PER_SOURCE:
             continue
-        excerpt = _trim(cand["text"])
+        # Center the excerpt on where the query terms actually appear, so a
+        # value buried deep in a long chunk isn't trimmed away.
+        excerpt = snippet(cand["text"], task, sorted(terms), width=EXCERPT_CHARS)
         cost = tok.count_tokens(excerpt) + 12
         if used + cost > max(0, budget - reserve) and evidence:
             break

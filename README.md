@@ -36,6 +36,16 @@ The repo ships a reproducible benchmark (`python3 benchmarks/run_benchmark.py`):
 
 Honest caveats, in the report itself ([benchmarks/RESULTS.md](benchmarks/RESULTS.md)): token counts are a chars/4 approximation; the corpus is synthetic (by design — it's checked in and re-runnable by anyone); and the bundled semantic backend is lexical, so it cannot bridge a *pure* paraphrase — keyword `search` is the workhorse, and true paraphrase retrieval needs an external embedding via `DOCDEX_EMBED_CMD`.
 
+**The bigger test — a real multi-field job.** Finding one fact is the easy case; the real job is "fill this whole form from a messy folder." A second benchmark ([benchmarks/RESULTS_TASK.md](benchmarks/RESULTS_TASK.md)) plants a 12-field vendor onboarding form's answers across realistically *large* contracts/sheets/PDFs (one field deliberately absent) and measures context delivered per token:
+
+| method | form fields covered | absent field flagged honestly | tokens |
+|---|---|---|---|
+| read whole files until budget | 0/11 | n/a | 135 (then stops) |
+| search + read each top file | 11/11 | n/a (would guess) | 20,228 |
+| **`docdex context --from-file`** | **8/11** | **1/1** | **1,464** |
+
+The naive search loop *can* cover everything — by reading 20k tokens of full documents, and with no way to say "this field isn't in the corpus." `docdex context` delivers ~73% of the findable fields at ~7% of that token cost **and** correctly reports the absent field as not found instead of forcing a guess. The 3 it misses are honest lexical-retrieval limits (a synonym the corpus never spells out; the real document losing to a short distractor that shares the field's word) — the exact gaps the v0.3 roadmap targets with a field-alias registry and reranking. It does not fabricate them; it lists them under "Missing."
+
 ## Using docdex with an LLM (the intended way)
 
 docdex works standalone, but it was designed to be **driven by an agent** — Claude Code, Codex, Gemini CLI, or anything that can run shell commands. The point of the benchmark table above is precisely that an agent *without* an index has only bad moves available (guess filenames, grep blindly, or read everything).
