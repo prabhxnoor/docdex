@@ -1,71 +1,97 @@
 # Changelog
 
-## 0.1.1 — 2026-06-11
+All notable changes to docdex are recorded here. The format follows
+[Keep a Changelog](https://keepachangelog.com/), and version numbers follow
+[Semantic Versioning](https://semver.org/).
 
-- **Hybrid semantic ranking.** `docdex semantic` now boosts embedding
-  similarity by the fraction of distinct query terms a chunk actually
-  contains. Pure cosine over hashed features rewarded vocabulary-soup
-  documents; chunks that really mention the query now rank on top.
-- **Reproducible value benchmark** (`benchmarks/`): deterministic corpus with
-  facts planted in Office/PDF files behind misleading filenames; measures
-  hit@1/hit@3, tokens-until-answer, and wall time for docdex vs. filename
-  browsing, raw grep, and read-everything baselines. Results in
-  `benchmarks/RESULTS.md`; headline 36× context reduction at 12/12 accuracy.
-- README: measured-value section and an explicit "Using docdex with an LLM"
-  walkthrough (agent session protocol, curation prompt, automation notes).
+**Readability rule:** entries are written for humans first. Anything that is
+unavoidably technical gets a plain-English *"In plain terms"* line so you can
+tell what changed and why without reading the code.
 
-## 0.1.0 — 2026-06-11
+## [Unreleased] — v0.2 "Trust & Context Foundations"
+
+Theme: make every result safe and trustworthy, then make docdex hand an agent
+*the context it needs for a task* instead of a list of search hits. Full plan
+in [docs/V0.2_PLAN.md](docs/V0.2_PLAN.md). This section fills in as the work
+lands; nothing here has shipped in a tagged release yet.
+
+### Security
+
+- **The index can no longer reach outside its own project.** The `index_dir`
+  setting in `.docdex.json` is now validated to be a plain folder name inside
+  the project; absolute paths, `..`, and path separators are rejected. Every
+  delete during `purge` is additionally checked to stay inside the project.
+  *In plain terms:* a corrupted or hand-edited config file could previously
+  make `docdex purge` delete a folder **outside** your project, including
+  non-docdex files. That can't happen anymore. (Audit finding DDX-001.)
+- **Symlinks no longer leak content from outside the project.** Symlinked
+  files are skipped by default; an optional `follow_symlinks` config can
+  re-enable them, and even then the target must stay inside the project.
+  *In plain terms:* if your folder contained a shortcut pointing somewhere
+  private, docdex used to read and cache that private file. Now it doesn't,
+  unless you explicitly opt in. (Audit finding DDX-002.)
+
+### Fixed
+
+- **Fuzzy search no longer reports junk as a real result.** `docdex semantic`
+  now exits with a "no matches" status for empty, punctuation-only, or
+  genuinely-unmatched queries instead of returning scaffold README files with
+  a score of zero. Very short documents are now indexed too, so a one-line
+  file is findable. *In plain terms:* the fuzzy search used to confidently
+  hand back unrelated files as if they were the answer — the worst kind of
+  wrong for an AI assistant. It now says "nothing matched" when nothing
+  matched. (Audit findings DDX-003, DDX-009.)
+- **Adding a duplicate file is counted as a new file, not a rename.** Sync
+  only treats a file as renamed when its twin has actually disappeared.
+  (Audit finding DDX-006.)
+- **A plug-in embedding model that misbehaves no longer crashes docdex.**
+  Embedding output is checked for valid numbers and a consistent size, and
+  errors are reported cleanly instead of as a Python stack trace. (Audit
+  finding DDX-004.)
+- **Corrupt index files give a clear message, not a stack trace.** A damaged
+  `.docdex.json` or inventory file now reports "this file looks corrupt; run
+  doctor or re-sync" with a clean exit code. (Audit finding DDX-008.)
+
+## [0.1.1] — 2026-06-11
+
+### Added
+
+- **Reproducible value benchmark** (`benchmarks/`). A deterministic test corpus
+  with facts hidden inside Office/PDF files behind misleading filenames, used to
+  measure how much context an agent must read to reach an answer. Headline:
+  `docdex search` reached every answer at roughly **36× less context** than
+  reading everything; filename browsing and raw grep found nothing.
+- README sections on the measured value and on **using docdex with an LLM**
+  (agent session protocol, a curation prompt, automation notes).
+
+### Changed
+
+- **Smarter fuzzy ranking.** `docdex semantic` now boosts a result by how many
+  of your search words actually appear in it, so a file that genuinely mentions
+  the query beats a file that just happens to share vocabulary.
+  *In plain terms:* fuzzy search got noticeably less easy to fool.
+
+## [0.1.0] — 2026-06-11
 
 First packaged release. docdex is the productized, generic rewrite of an
-internal document-indexing toolchain ("qdoc"/"ctx") that previously lived as
-vendored scripts inside one corpus.
+internal document-indexing toolchain, turned into an installable package.
 
-### Architecture
+### Added
 
-- Proper Python package with a `docdex` console command; install once with
-  pipx, use in any number of projects. Per-project state lives under
-  `<index>/_state/`; projects carry no code, so fixes ship via
-  `pipx upgrade` instead of copy-paste (which had already caused two-way
-  template drift in the prototype).
-- Project discovery via a `.docdex.json` root marker; every command works
-  from any subdirectory. The optional `./ctx` wrapper resolves its own
-  location, so it also works regardless of cwd.
-- One shared filesystem walker for all commands (the prototype had three
-  divergent walk implementations).
+- `docdex` command installable once via pipx and usable in any number of
+  projects; per-project state under `<index>/_state/`. `init` scaffolds the
+  index plus `CLAUDE.md`/`AGENTS.md` agent instructions and a `./ctx` wrapper.
+- Incremental `sync` (new/changed/renamed/deleted, content-hash rename
+  detection), ranked `search`, fuzzy `semantic`, per-folder context `dumps`,
+  cloud `prefetch`, a `vision` OCR queue, `dedup`, `doctor` (with `--e2e`),
+  and a zero-residue `purge`.
+- 42 automated tests; CI on Ubuntu and macOS across Python 3.9 and 3.12.
 
-### Fixes relative to the prototype
+### Fixed (versus the internal prototype)
 
-- **Vision/OCR notes are searchable.** Notes now live in
-  `<index>/vision_notes/`, inside the indexed tree. In the prototype they
-  were written under `_tools/` which the walker skipped — notes never became
-  searchable despite the documented workflow. Guarded by a regression test
-  and a `doctor` check.
-- **Collision-proof cache names.** Cache filenames embed a hash of the full
-  source path; previously `A B.docx` and `A_B.docx` mapped to the same cache
-  file and silently overwrote each other.
-- **Scanned/empty documents no longer poison status.** Empty extractions are
-  recorded once (`extract_status.tsv`: `empty`) and surfaced as vision/OCR
-  candidates instead of being re-extracted every sync and permanently
-  reported as cache gaps.
-- **Segment-safe path filtering.** Sibling folders sharing the index dir's
-  name prefix (e.g. `_indexes/` next to `_index/`) are no longer skipped.
-- **Incremental semantic indexing.** Only new/changed files are re-embedded;
-  unchanged index lines stream through. The prototype re-embedded the entire
-  corpus on every sync.
-- **Pure dry-run.** `sync --dry-run` writes nothing (the prototype appended
-  to its error log even in dry-run).
-- **Prefetch covers the whole corpus.** The prototype's `--quick` mode
-  stopped after the first 200 files in walk order.
-- Cross-platform behavior for `.doc`/`.rtf`: macOS uses `textutil`; other
-  platforms report the files as unsupported instead of erroring.
-
-### Features
-
-- `docdex init` scaffolds the index plus `CLAUDE.md`/`AGENTS.md` agent
-  instructions and a `./ctx` wrapper.
-- `docdex doctor --e2e` runs a full write→sync→search→delete sentinel
-  self-test.
-- `docdex purge` guarantees zero residue (`--state-only` keeps curated
-  files and vision notes).
-- `docdex dedup` is dry-run by default.
-- Pluggable embeddings via `DOCDEX_EMBED_CMD`.
+- Vision/OCR notes are now searchable (they live inside the indexed tree).
+- Cache filenames are collision-proof (content-hash suffix).
+- Scanned/empty documents are recorded once, not re-processed every sync.
+- Sibling folders sharing the index name are no longer skipped by mistake.
+- Semantic indexing is incremental; `--dry-run` writes nothing; cloud prefetch
+  covers the whole corpus.

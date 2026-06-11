@@ -21,15 +21,44 @@ import re
 import subprocess
 from typing import Dict, Iterator, List, Optional, Tuple
 
-from docdex.config import Project
+from docdex.config import DocdexError, Project, StateError
 from docdex.inventory import read_inventory, write_tsv
+from docdex.search import tokenize
 
 DIM = 384
 CHUNK_CHARS = 1800
 OVERLAP = 250
+MIN_CHUNK_CHARS = 5      # below this a chunk is whitespace/noise
 LOCAL_BACKEND = "local-hash-v1"
 EMBED_CMD_ENV = "DOCDEX_EMBED_CMD"
 MANIFEST_HEADER = ["path", "sha1", "chunks", "backend"]
+
+
+class EmptyQuery(DocdexError):
+    """Raised when a semantic query has no searchable terms."""
+
+
+class EmbeddingError(DocdexError):
+    """Raised when an embedding backend returns unusable output."""
+
+
+def _validate_vector(vec, expected_dim=None):
+    if not isinstance(vec, list) or not vec:
+        raise EmbeddingError("embedding backend returned an empty or non-list vector")
+    out = []
+    for x in vec:
+        try:
+            f = float(x)
+        except (TypeError, ValueError):
+            raise EmbeddingError(f"embedding contained a non-numeric value: {x!r}")
+        if not math.isfinite(f):
+            raise EmbeddingError("embedding contained a non-finite value (NaN/Inf)")
+        out.append(f)
+    if expected_dim is not None and len(out) != expected_dim:
+        raise EmbeddingError(
+            f"embedding has {len(out)} dimensions, expected {expected_dim}; "
+            "rebuild the index with `docdex embed --force`")
+    return out
 
 
 def norm_text(text: str) -> str:
@@ -69,15 +98,28 @@ def local_hash_embed(text: str) -> List[float]:
     return [round(v / mag, 6) for v in vec]
 
 
+def _embed_timeout() -> int:
+    raw = os.environ.get("DOCDEX_EMBED_TIMEOUT", "").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 120
+
+
 def external_embed(text: str, command: str) -> List[float]:
-    proc = subprocess.run(command, input=text, text=True, shell=True,
-                          capture_output=True, timeout=120)
+    try:
+        proc = subprocess.run(command, input=text, text=True, shell=True,
+                              capture_output=True, timeout=_embed_timeout())
+    except subprocess.TimeoutExpired:
+        raise EmbeddingError(
+            f"embedding command timed out (DOCDEX_EMBED_TIMEOUT={_embed_timeout()}s)")
     if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or f"embed command exited {proc.returncode}")
-    data = json.loads(proc.stdout)
-    if not isinstance(data, list) or not data:
-        raise RuntimeError("embed command did not return a JSON float array")
-    return [float(x) for x in data]
+        raise EmbeddingError(proc.stderr.strip() or f"embed command exited {proc.returncode}")
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        raise EmbeddingError("embed command did not return valid JSON")
+    return _validate_vector(data)
 
 
 def current_backend() -> str:
@@ -135,47 +177,62 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
     new_manifest: Dict[str, dict] = {}
     total_chunks = 0
 
+    old_meta = status(project) or {}
+    # When everything is reused, the dimension comes from the existing index.
+    dim = old_meta.get("dim") if reuse else None
     embedded_files = 0
-    with open(tmp, "w", encoding="utf-8") as out:
-        if reuse:
-            # Zero-chunk files (too short to index) are tracked too, so they
-            # are not pointlessly revisited on every rebuild.
-            for rel in reuse:
-                new_manifest[rel] = {"path": rel, "sha1": targets[rel],
-                                     "chunks": "0", "backend": backend}
-            with open(project.semantic_index_path, "r", encoding="utf-8") as old:
-                for line in old:
-                    try:
-                        rel = json.loads(line).get("path")
-                    except json.JSONDecodeError:
-                        continue
-                    if rel in reuse:
-                        out.write(line if line.endswith("\n") else line + "\n")
-                        entry = new_manifest[rel]
-                        entry["chunks"] = str(int(entry["chunks"]) + 1)
-                        total_chunks += 1
-        for rel in to_embed:
-            cache = project.cache_path_for(rel)
-            try:
-                text = cache.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            file_chunks = 0
-            for idx, (offset, chunk) in enumerate(chunks(text)):
-                if len(chunk) < 40:
+    try:
+        with open(tmp, "w", encoding="utf-8") as out:
+            if reuse:
+                # Zero-chunk files (too short to index) are tracked too, so they
+                # are not pointlessly revisited on every rebuild.
+                for rel in reuse:
+                    new_manifest[rel] = {"path": rel, "sha1": targets[rel],
+                                         "chunks": "0", "backend": backend}
+                with open(project.semantic_index_path, "r", encoding="utf-8") as old:
+                    for line in old:
+                        try:
+                            rel = json.loads(line).get("path")
+                        except json.JSONDecodeError:
+                            continue
+                        if rel in reuse:
+                            out.write(line if line.endswith("\n") else line + "\n")
+                            entry = new_manifest[rel]
+                            entry["chunks"] = str(int(entry["chunks"]) + 1)
+                            total_chunks += 1
+            for rel in to_embed:
+                cache = project.cache_path_for(rel)
+                try:
+                    text = cache.read_text(encoding="utf-8", errors="replace")
+                except OSError:
                     continue
-                out.write(json.dumps({
-                    "path": rel, "chunk": idx, "offset": offset,
-                    "text": chunk[:500], "vector": embed(chunk),
-                }, ensure_ascii=False) + "\n")
-                file_chunks += 1
-                total_chunks += 1
-            new_manifest[rel] = {
-                "path": rel, "sha1": targets[rel],
-                "chunks": str(file_chunks), "backend": backend,
-            }
-            if file_chunks:
-                embedded_files += 1
+                file_chunks = 0
+                chunk_list = list(chunks(text))
+                for idx, (offset, chunk) in enumerate(chunk_list):
+                    if len(chunk.strip()) < MIN_CHUNK_CHARS:
+                        continue
+                    # Short chunks are usually trailing fragments — skip them,
+                    # UNLESS the whole file is one short chunk, which must stay
+                    # findable.
+                    if len(chunk) < 40 and len(chunk_list) > 1:
+                        continue
+                    vector = _validate_vector(embed(chunk), expected_dim=dim)
+                    dim = dim or len(vector)
+                    out.write(json.dumps({
+                        "path": rel, "chunk": idx, "offset": offset,
+                        "text": chunk[:500], "vector": vector,
+                    }, ensure_ascii=False) + "\n")
+                    file_chunks += 1
+                    total_chunks += 1
+                new_manifest[rel] = {
+                    "path": rel, "sha1": targets[rel],
+                    "chunks": str(file_chunks), "backend": backend,
+                }
+                if file_chunks:
+                    embedded_files += 1
+    except DocdexError:
+        tmp.unlink(missing_ok=True)  # leave the previous index intact
+        raise
 
     os.replace(tmp, project.semantic_index_path)
     write_tsv(project.semantic_manifest_path,
@@ -183,6 +240,7 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
               header=MANIFEST_HEADER)
     meta = {
         "backend": backend,
+        "dim": dim,
         "files": sum(1 for m in new_manifest.values() if int(m["chunks"]) > 0),
         "tracked_files": len(new_manifest),
         "chunks": total_chunks,
@@ -197,15 +255,26 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
 
 
 def search(project: Project, query: str, folder: Optional[str] = None,
-           limit: int = 8) -> List[Tuple[float, dict]]:
-    """Hybrid ranking: embedding similarity, boosted by the fraction of
-    distinct query terms the chunk actually contains. Pure cosine over hashed
-    features rewards vocabulary-soup documents; the coverage boost keeps
-    chunks that really mention the query on top."""
+           limit: int = 8, min_score: float = 1e-6) -> List[Tuple[float, dict]]:
+    """Hybrid ranking with a confidence floor.
+
+    Similarity is boosted by the fraction of distinct query terms the chunk
+    actually contains. Weak/unrelated chunks are dropped instead of returned
+    as false evidence: the local hash backend is lexical, so a hit must share
+    at least one query term; a neural backend (DOCDEX_EMBED_CMD) is allowed to
+    match on meaning, so it only needs a positive score above the floor.
+    """
     if not project.semantic_index_path.exists():
         raise FileNotFoundError("semantic index missing — run `docdex embed` or `docdex sync`")
-    qvec = embed(query)
+    if not tokenize(query):
+        raise EmptyQuery(f"query has no searchable terms: {query!r}")
+
+    backend = current_backend()
+    meta = status(project) or {}
+    qvec = _validate_vector(embed(query), expected_dim=meta.get("dim"))
     terms = set(re.findall(r"[a-z0-9][a-z0-9_\-]{2,}", query.lower()))
+    lexical = backend == LOCAL_BACKEND
+
     hits: List[Tuple[float, dict]] = []
     with open(project.semantic_index_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -217,8 +286,14 @@ def search(project: Project, query: str, folder: Optional[str] = None,
                 continue
             base = dot(qvec, row["vector"])
             haystack = (row.get("text", "") + " " + row.get("path", "")).lower()
-            coverage = (sum(1 for t in terms if t in haystack) / len(terms)) if terms else 0.0
-            hits.append((base * (1.0 + 2.0 * coverage), row))
+            present = sum(1 for t in terms if t in haystack)
+            coverage = present / len(terms) if terms else 0.0
+            score = base * (1.0 + 2.0 * coverage)
+            if score < min_score:
+                continue
+            if lexical and present == 0:
+                continue  # lexical backend with zero term overlap is not a match
+            hits.append((score, row))
     hits.sort(key=lambda x: -x[0])
     return hits[:limit]
 

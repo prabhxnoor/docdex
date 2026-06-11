@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, Optional
 
-from docdex.config import Project, utc_now_iso
+from docdex.config import Project, StateError, utc_now_iso
 
 HEADER = ["path", "size", "mtime_iso", "sha1", "ext", "folder"]
 STATUS_HEADER = ["path", "status", "chars", "detail", "ts"]
@@ -53,19 +53,24 @@ def read_inventory(path: Path) -> Dict[str, dict]:
     rows: Dict[str, dict] = {}
     if not path.exists():
         return rows
-    with open(path, "r", encoding="utf-8", newline="") as f:
-        reader = csv.reader(f, delimiter="\t")
-        try:
-            header = next(reader)
-        except StopIteration:
-            return rows
-        for parts in reader:
-            if len(parts) != len(header):
-                continue
-            row = dict(zip(header, parts))
-            row.setdefault("mtime_iso", "")
-            row.setdefault("sha1", "")
-            rows[row["path"]] = row
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.reader(f, delimiter="\t")
+            try:
+                header = next(reader)
+            except StopIteration:
+                return rows
+            for parts in reader:
+                if len(parts) != len(header):
+                    continue
+                row = dict(zip(header, parts))
+                row.setdefault("mtime_iso", "")
+                row.setdefault("sha1", "")
+                rows[row["path"]] = row
+    except (csv.Error, UnicodeDecodeError) as e:
+        raise StateError(
+            f"inventory is corrupt and could not be read ({e}). "
+            "Run `docdex sync` to rebuild it.")
     return rows
 
 

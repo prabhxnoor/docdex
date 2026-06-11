@@ -46,17 +46,62 @@ def _truncate_utf8(text: str, max_bytes: int) -> str:
     return raw[:max_bytes].decode("utf-8", errors="ignore")
 
 
-class NotAProject(Exception):
+class DocdexError(Exception):
+    """Base class for docdex errors the CLI should report cleanly (exit 2)."""
+
+
+class NotAProject(DocdexError):
     """Raised when no `.docdex.json` marker is found at or above a path."""
+
+
+class ConfigError(DocdexError):
+    """Raised when a `.docdex.json` marker is malformed or unsafe."""
+
+
+class StateError(DocdexError):
+    """Raised when a derived state file is corrupt and cannot be parsed."""
+
+
+def validate_index_dir(name: str) -> str:
+    """A project's index dir must be a single, in-project folder name.
+
+    Rejecting separators, `.`/`..`, and absolute paths is what keeps a
+    corrupt or hostile `.docdex.json` from steering writes — and `purge`
+    deletes — outside the project root.
+    """
+    if not isinstance(name, str) or not name.strip():
+        raise ConfigError("index_dir must be a non-empty folder name")
+    if name in (".", ".."):
+        raise ConfigError("index_dir may not be '.' or '..'")
+    if "/" in name or "\\" in name or "\x00" in name:
+        raise ConfigError(
+            f"index_dir must be a plain folder name, not a path: {name!r}")
+    if PurePosixPath(name).is_absolute() or Path(name).is_absolute():
+        raise ConfigError(f"index_dir must be relative, not absolute: {name!r}")
+    return name
 
 
 class Project:
     def __init__(self, root: Path, config: dict):
         self.root = root.resolve()
         self.config = config
-        self.index_dir_name: str = config.get("index_dir", DEFAULT_INDEX_DIR)
+        self.index_dir_name: str = validate_index_dir(
+            config.get("index_dir", DEFAULT_INDEX_DIR))
         self.wrapper_name: str = config.get("wrapper", DEFAULT_WRAPPER)
         self.skip_dirs = set(config.get("skip_dirs", [])) | BUILTIN_SKIP_DIRS
+        self.follow_symlinks: bool = bool(config.get("follow_symlinks", False))
+
+    def is_within_root(self, path: Path) -> bool:
+        """True iff `path` resolves to somewhere inside the project root.
+
+        Defense in depth for every destructive or write operation: even if a
+        config value slipped past validation, nothing acts outside the root.
+        """
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return False
+        return resolved == self.root or self.root in resolved.parents
 
     # ---------------------------------------------------------------- layout
     @property
@@ -201,7 +246,14 @@ class Project:
         marker = root / MARKER_NAME
         if not marker.is_file():
             raise NotAProject(f"no {MARKER_NAME} in {root}")
-        config = json.loads(marker.read_text(encoding="utf-8"))
+        try:
+            config = json.loads(marker.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise ConfigError(
+                f"{MARKER_NAME} is corrupt and could not be read ({e}). "
+                "Fix or recreate it with `docdex init`.")
+        if not isinstance(config, dict):
+            raise ConfigError(f"{MARKER_NAME} must contain a JSON object")
         return cls(root, config)
 
     @classmethod

@@ -35,6 +35,13 @@ def iter_source_files(project: Project) -> Iterator[Tuple[str, Path]]:
         for d in sorted(dirnames):
             if d in project.skip_dirs or d.startswith("."):
                 continue
+            # A symlinked directory is not descended into (followlinks=False),
+            # but skip it explicitly too unless the project opted in and the
+            # target stays inside the root.
+            dpath = Path(dirpath) / d
+            if dpath.is_symlink() and not (
+                    project.follow_symlinks and project.is_within_root(dpath)):
+                continue
             sub = f"{rel}/{d}" if rel else d
             if sub == index_name:
                 kept.append(d)  # descend so we can reach Update/ and notes
@@ -55,5 +62,11 @@ def iter_source_files(project: Project) -> Iterator[Tuple[str, Path]]:
             if not rel and fn in (project.wrapper_name,):
                 continue
             abs_path = Path(dirpath) / fn
+            # Skip symlinked files by default — following one would index (and
+            # cache) content from outside the project, a privacy leak. Opt in
+            # via follow_symlinks, and only when the target stays in-project.
+            if abs_path.is_symlink() and not (
+                    project.follow_symlinks and project.is_within_root(abs_path)):
+                continue
             rel_path = f"{rel}/{fn}" if rel else fn
             yield rel_path, abs_path

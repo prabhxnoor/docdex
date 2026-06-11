@@ -220,6 +220,12 @@ def run_purge(project: Project, yes: bool = False, state_only: bool = False,
         print("\nSource documents are never touched. Re-run with --yes to confirm.")
         return 1
     for t in purge_targets(project):
+        # Never delete anything that resolves outside the project root, even if
+        # a config value somehow steered a target there.
+        if not project.is_within_root(t):
+            if not quiet:
+                print(f"refusing to delete outside the project: {t}")
+            continue
         if t.is_dir():
             shutil.rmtree(t)
         else:

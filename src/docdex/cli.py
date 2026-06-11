@@ -6,16 +6,15 @@ import sys
 from pathlib import Path
 
 from docdex import __version__
-from docdex.config import DEFAULT_INDEX_DIR, DEFAULT_WRAPPER, NotAProject, Project
+from docdex.config import (
+    DEFAULT_INDEX_DIR, DEFAULT_WRAPPER, DocdexError, NotAProject, Project,
+)
 
 
 def _project(args: argparse.Namespace) -> Project:
-    try:
-        if args.root:
-            return Project.load(Path(args.root).resolve())
-        return Project.discover()
-    except NotAProject as e:
-        raise SystemExit(f"docdex: {e}")
+    if args.root:
+        return Project.load(Path(args.root).resolve())
+    return Project.discover()
 
 
 # --------------------------------------------------------------------- init
@@ -128,7 +127,10 @@ def cmd_semantic(args: argparse.Namespace) -> int:
     project = _project(args)
     try:
         hits = semantic.search(project, args.query, folder=args.folder, limit=args.limit)
-    except FileNotFoundError as e:
+    except semantic.EmptyQuery as e:
+        print(f"docdex: {e}", file=sys.stderr)
+        return 2
+    except (FileNotFoundError, semantic.EmbeddingError) as e:
         print(f"docdex: {e}", file=sys.stderr)
         return 2
     if not hits:
@@ -142,7 +144,11 @@ def cmd_semantic(args: argparse.Namespace) -> int:
 
 def cmd_embed(args: argparse.Namespace) -> int:
     from docdex import semantic
-    semantic.build(_project(args), force=args.force)
+    try:
+        semantic.build(_project(args), force=args.force)
+    except semantic.EmbeddingError as e:
+        print(f"docdex: {e}", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -299,7 +305,11 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_purge)
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except DocdexError as e:
+        print(f"docdex: {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

@@ -170,9 +170,16 @@ def run_sync(project: Project, dry_run: bool = False, no_hash: bool = False,
             new_rows[rel] = row
             prev = old.get(rel)
             if prev is None:
-                if row["sha1"] and row["sha1"] in old_by_sha:
+                # A rename means an old path with this content has *gone*. If a
+                # twin still exists on disk, this is a new (duplicate) file, not
+                # a rename — otherwise copying one file is miscounted as moving.
+                rename_sources = [
+                    old_rel for old_rel in old_by_sha.get(row["sha1"], [])
+                    if not (project.root / old_rel).exists()
+                ] if row["sha1"] else []
+                if rename_sources:
                     counts["renamed"] += 1
-                    if may_write and not extractor.copy_renamed(old_by_sha[row["sha1"]], rel):
+                    if may_write and not extractor.copy_renamed(rename_sources, rel):
                         extractor.refresh(rel, abs_path, force=True)
                 else:
                     counts["new"] += 1
