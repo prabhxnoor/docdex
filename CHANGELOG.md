@@ -33,6 +33,16 @@ lands; nothing here has shipped in a tagged release yet.
 
 ### Added
 
+- **`docdex context "your task" --budget N` — the headline new command.** Instead
+  of a list of search hits, it returns a compact *evidence packet*: the likely
+  cited answers, supporting excerpts with sources, an explicit "what's missing"
+  list, and a suggested follow-up — all packed to fit a token budget.
+  `docdex context --from-file form.md` retrieves evidence field-by-field for a
+  form. *In plain terms:* this is the thing the tool was really for — an AI
+  assistant asks docdex for the context it needs to do a job, and gets just
+  that, with citations, instead of reading hundreds of files. docdex stays
+  deterministic and never calls an AI model itself; it hands the packet to the
+  assistant already doing the work.
 - **A real search engine under the hood (SQLite + FTS5, BM25 ranking).** `sync`
   now builds a `_state/index.db` lexical index; `search` uses it automatically
   when present. *In plain terms:* search is now both faster on big folders and

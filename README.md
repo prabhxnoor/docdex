@@ -48,12 +48,31 @@ docdex init && docdex sync
 claude        # or your agent of choice
 ```
 
-`init` scaffolds `CLAUDE.md` (auto-loaded by Claude Code) and `AGENTS.md` (for other agents). These teach the agent the session protocol: check `./ctx status` first, offer to sync if stale, and retrieve in cost order — curated overview → one topical file → `search`/`semantic` snippets → a single source file. Never bulk-load the corpus.
+`init` scaffolds `CLAUDE.md` (auto-loaded by Claude Code) and `AGENTS.md` (for other agents). These teach the agent the session protocol: check `./ctx status` first, offer to sync if stale, then **gather context with `./ctx context "the task" --budget N`** and fill only the gaps it reports — instead of bulk-loading the corpus.
+
+**The `context` command is the heart of it.** Rather than a list of hits, it returns a token-budgeted *evidence packet* — cited answers, supporting excerpts, an explicit "what's missing", and a suggested next call:
+
+```text
+$ ./ctx context "what is the liability cap and payment terms with Meridian" --budget 1200
+# context packet
+Task: what is the liability cap and payment terms with Meridian
+Budget: 1200 tok  |  Used: ~130  |  Index: fresh
+
+## Likely answers (cited)
+- The aggregate liability cap under this agreement is INR 4.2 crore.  [Contracts/scan_0231 copy.md ·0]
+- Payment terms are net-45 from invoice date.  [Contracts/scan_0231 copy.md ·0]
+
+## Evidence
+[E1] Contracts/scan_0231 copy.md ·0  (score 5.31)
+  "...aggregate liability cap under this agreement is INR 4.2 crore. Payment terms are net-45..."
+```
+
+For a form, `./ctx context --from-file vendor_form.md --budget 3000` retrieves evidence field-by-field and tells the agent which fields it couldn't find. docdex stays deterministic — it packs and cites evidence; the agent already in the loop does the reasoning. No API keys, no model calls from docdex.
 
 **What a session looks like afterwards:**
 
 > **You:** What's our liability cap with Meridian?
-> **Agent:** *(runs `./ctx search "liability cap Meridian"`)* Per `Misc/scan_0231 copy.docx`, the aggregate liability cap under the Meridian MSA is INR 4.2 crore. — *~800 tokens of context, not 28,000.*
+> **Agent:** *(runs `./ctx context "liability cap Meridian" --budget 1000`)* Per `Contracts/scan_0231 copy.docx`, the aggregate liability cap under the Meridian MSA is INR 4.2 crore. — *~130 tokens of context, not 28,000.*
 
 **One-time curation worth doing.** After the first sync, hand your agent this prompt — it builds the cheapest retrieval tier (and is the step that turns a *search tool* into a *knowledge base*):
 
@@ -109,6 +128,7 @@ docdex doctor --e2e                          # full integrity self-test
 |---|---|
 | `docdex init` | Initialize a project. `--index NAME` to rename the index folder, `--no-agent-docs` / `--no-wrapper` to skip extras. |
 | `docdex sync` | Incremental reindex: cloud prefetch → inventory + text caches → context dumps → semantic index → vision queue. Flags to skip stages: `--no-prefetch`, `--no-dumps`, `--no-embed`, `--no-vision`; plus `--dry-run`, `--backfill`, `--no-hash`. |
+| `docdex context "task"` | Build a token-budgeted evidence packet (cited answers, excerpts, gaps). `--budget N`, `--folder X`, `--from-file form.md`, `--explain`. |
 | `docdex status` | Freshness check (exit 0 fresh, 1 stale/gaps). Distinguishes real cache gaps from scanned files with no text. |
 | `docdex search "q"` | Ranked keyword search over extracted text. `--folder X`, `-n N`. |
 | `docdex semantic "q"` | Semantic-index search. Same flags. |

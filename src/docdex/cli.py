@@ -210,6 +210,37 @@ def cmd_vision(args: argparse.Namespace) -> int:
     return 1 if result["pending"] else 0
 
 
+def cmd_context(args: argparse.Namespace) -> int:
+    from docdex import context as ctxmod
+    project = _project(args)
+    if not project.inventory_path.exists():
+        print("docdex: index not built — run `docdex sync` first", file=sys.stderr)
+        return 2
+    fields = None
+    task = args.task
+    if args.from_file:
+        form = Path(args.from_file)
+        if not form.is_file():
+            print(f"docdex: no such form file: {args.from_file}", file=sys.stderr)
+            return 2
+        text = form.read_text(encoding="utf-8", errors="replace")
+        fields = ctxmod.parse_form_fields(text)
+        if not task:
+            task = f"fill the form: {form.name}"
+    if not task:
+        print("docdex: provide a task description or --from-file", file=sys.stderr)
+        return 2
+    try:
+        packet = ctxmod.build_packet(project, task, budget=args.budget,
+                                     folder=args.folder, form_fields=fields,
+                                     explain=args.explain)
+    except ctxmod.EmptyTask as e:
+        print(f"docdex: {e}", file=sys.stderr)
+        return 2
+    sys.stdout.write(packet)
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from docdex.doctor import run_doctor
     return run_doctor(_project(args), no_sha=args.no_sha, e2e=args.e2e)
@@ -298,6 +329,16 @@ def main(argv=None) -> int:
     p.add_argument("--folder")
     p.add_argument("-n", "--limit", type=int, default=8)
     p.set_defaults(func=cmd_semantic)
+
+    p = sub.add_parser("context",
+                       help="build a token-budgeted evidence packet for a task")
+    p.add_argument("task", nargs="?", help="the task/question to gather context for")
+    p.add_argument("--budget", type=int, default=3000, help="token budget (default 3000)")
+    p.add_argument("--folder", help="restrict to paths containing this substring")
+    p.add_argument("--from-file", help="a form file: retrieve evidence per field")
+    p.add_argument("--explain", action="store_true",
+                   help="show retrieval internals (queries, candidates, engine)")
+    p.set_defaults(func=cmd_context)
 
     p = sub.add_parser("embed", help="rebuild the semantic index (incremental)")
     p.add_argument("--force", action="store_true", help="re-embed everything")

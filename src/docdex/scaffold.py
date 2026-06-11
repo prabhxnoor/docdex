@@ -31,22 +31,26 @@ HANDOFF_TEMPLATE = """# {index_dir} — Operating manual
 Token-efficient local index over the documents in this project. Front door:
 
 ```bash
-./{wrapper} status     # freshness + cache coverage
-./{wrapper} sync       # (re)index: inventory, text caches, dumps, semantic index, vision queue
-./{wrapper} search "exact words or topic"
-./{wrapper} semantic "rough description"
-./{wrapper} doctor     # integrity checks (--e2e for a full self-test)
+./{wrapper} status                         # freshness + cache coverage
+./{wrapper} sync                           # (re)index everything
+./{wrapper} context "your task" --budget 3000   # token-budgeted evidence packet
+./{wrapper} search "exact words or topic"  # BM25 keyword search
+./{wrapper} semantic "rough description"   # fuzzy search
+./{wrapper} doctor                         # integrity checks (--e2e for a self-test)
 ```
 
-## Load tiers (cheapest first)
+## How to gather context for a task (cheapest first)
 
-1. `00_MASTER_INDEX.md` — curated overview (write it once the corpus is indexed).
-2. One topical `NN_*.md` file, if curated.
-3. `search` / `semantic` — ranked snippets only.
+1. **`./{wrapper} context "the task" --budget N`** — the preferred move. Returns a
+   compact packet: cited answers, evidence excerpts, what's missing, and a
+   suggested follow-up. For a form, `./{wrapper} context --from-file form.md`.
+2. `00_MASTER_INDEX.md` — curated overview, if one has been written.
+3. `search` / `semantic` — ranked snippets when you need to drill in.
 4. A specific extracted cache under `_state/extracted/`, or the source file.
 
-Never load all topical files, whole context dumps, or the semantic index
-into an LLM context.
+Never bulk-load the corpus, all topical files, whole context dumps, or the
+semantic index into your context window. Start with `context`, then fill only
+the gaps it reports.
 
 ## Updating
 
@@ -94,9 +98,11 @@ Then read `{index_dir}/HANDOFF.md`.
 
 ## Hard rules
 
-1. Token-economy load tiers: `00_MASTER_INDEX.md` -> one topical file ->
-   `./{wrapper} search` / `./{wrapper} semantic` snippets -> a specific source file.
-   Never load all topical files or the semantic index at once.
+1. To gather context for a task, prefer `./{wrapper} context "<task>" --budget N`
+   (a cited, token-budgeted evidence packet) over reading files. Then escalate
+   only for gaps: `00_MASTER_INDEX.md` -> a topical file -> `./{wrapper} search`
+   / `./{wrapper} semantic` -> a specific source file. Never bulk-load the
+   corpus, all topical files, or the semantic index at once.
 2. Never move source files programmatically (cloud-sync links break on moves).
 3. Use the `./{wrapper}` front door rather than reimplementing indexing ad hoc.
 4. Don't refresh curated `NN_*.md` files automatically — confirm with the user.
