@@ -101,21 +101,39 @@ Make docdex aware that documents change and disagree.
   draft isn't always the truth).
 - ⬜ **Same-family supersession hints** ("this looks like a newer version of X").
 
-### M3 — Index lifecycle & scale: stay lean and smart over time  *(answers the "won't the DB balloon?" question)* ❓
+### M3 — Index lifecycle & self-maintenance  *(answers "won't the DB balloon?" — **DECIDED: opt-in auto-archival, with rails**)*
 
-Reality check first: **SQLite FTS5 is built for this.** A personal corpus of tens
-of thousands of files is a DB of tens of MB and sub-second queries; size is not a
-practical problem for years. So the work here is *hygiene + optional
-intelligence*, not rescue.
+Reality check: **SQLite FTS5 is built for scale** — tens of thousands of files is
+a DB of tens of MB with sub-second queries, so raw *size* isn't a near-term
+problem. The decision (2026-06-11) is to go beyond hygiene: docdex should
+**self-prune over time via opt-in auto-archival** — engineered so it can never
+lose a document.
 
-- ⬜ **DB hygiene** — periodic `optimize`/`VACUUM`, prune index rows for
-  soft-deleted files so the DB tracks the live corpus, not its whole history.
-- ⬜ **Usage/recency signals** — record what actually gets retrieved, to inform
-  ranking and any aging policy.
-- ❓ **Aging / archival policy** — *should* docdex ever de-prioritise or drop old
-  content on its own, and if so by what rule? This is a real design fork with
-  data-loss stakes — **see Open question #1.** Default stance until decided:
-  docdex never deletes indexed content you haven't deleted yourself.
+**Non-negotiable safety rails** (these define what "archive" means here):
+
+- **Off by default.** Archival runs only when you enable explicit rules in
+  `.docdex.json` (e.g. *archive files untouched > 18 months*; *demote superseded
+  versions of the same doc*). No rules = today's keep-everything behavior.
+- **Archives the *index entry*, never the source file.** docdex's hard rule —
+  never move or modify source files — still holds absolutely. Archiving parks a
+  file's *index presence* (it stops appearing in `search`/`context`) into an
+  `_state/archive/` tier; your document on disk is untouched.
+- **Fully reversible + audit-logged.** Every archive/restore is recorded (extends
+  the existing history log). `docdex archive list`, `docdex restore <path>`, and
+  `--restore-all` bring anything back instantly.
+- **Preview before action.** `docdex archive --dry-run` shows exactly what would
+  be parked; nothing is archived without that preview / an explicit run.
+
+Build order:
+
+- ⬜ **DB hygiene** — periodic `optimize`/`VACUUM`, prune rows for deleted files,
+  rotate `inventory_history`. *(Cheap; ships first.)*
+- ⬜ **Usage/recency signals** — record what gets retrieved + last-seen, to drive
+  both ranking (M2) and the archival rules.
+- ⬜ **Opt-in auto-archival engine** — rule evaluation, the `_state/archive/`
+  tier, `archive`/`restore` commands, `--dry-run`, audit log. **Depends on M2**
+  (it needs recency + same-family supersession detection to know what is "old" or
+  "superseded").
 
 ### M4 — Budget intelligence: stop guessing how much context to fetch  *(answers the "does the LLM pick the budget?" concern)*
 
@@ -150,19 +168,19 @@ have at least one hard failure.
 
 ---
 
-## Open questions (need a user decision before building)
+## Decisions & open questions
 
-1. **How "smart" should the index get about old / superseded information? (M3)**
-   Three distinct directions, very different risk:
-   - **(a) Hygiene only** — keep the DB small and fast; never drop content you
-     didn't delete. *Safe, low effort.*
-   - **(b) Recency & conflict awareness** — never delete, but *flag* stale or
-     conflicting facts and optionally weight newer ones higher (this is also M2).
-     *The high-value, low-risk option.*
-   - **(c) Active forgetting / archival** — actually drop or archive old content
-     by age/access so the corpus self-prunes. *Powerful but data-loss-prone;
-     needs strict rules.*
-   _Recommendation: (a)+(b). Treat (c) as opt-in only, if at all._
+**Decided**
+
+1. **How smart should the index get about old / superseded information? (M2+M3)** —
+   *Decided 2026-06-11:_ go all the way to **option (c), opt-in auto-archival**,
+   built on **(b) flag-&-rank** as its prerequisite. Hard rails (see M3): it
+   archives *index entries* not source files, stays **off by default**, and is
+   **fully reversible + audit-logged** with a `--dry-run` preview. M2 ships first.
+
+**Open**
+
+- _(none right now — add here as they arise.)_
 
 ---
 
