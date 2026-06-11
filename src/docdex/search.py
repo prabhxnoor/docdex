@@ -25,18 +25,25 @@ def snippet(text: str, query: str, terms: List[str], width: int = 260) -> str:
 
 
 def score_text(path: str, text: str, query: str, terms: List[str]) -> int:
+    """Coverage-weighted keyword score with term-frequency saturation.
+
+    Each term's contribution is capped (BM25-style) so a document that just
+    repeats a common word can't out-rank one that genuinely contains all the
+    query terms including the rare/answer-bearing one.
+    """
     lower = text.lower()
     path_lower = path.lower()
     score = 0
     matched = 0
     if query.lower() in lower:
-        score += 50 * lower.count(query.lower())
+        score += 20 * min(3, lower.count(query.lower()))
     for t in terms:
         weight = 3 if len(t) >= 5 else 1
-        if lower.count(t) + path_lower.count(t):
+        tf = lower.count(t)
+        if tf + path_lower.count(t):
             matched += 1
-        score += weight * lower.count(t)
-        score += 5 * path_lower.count(t)
+        score += weight * min(tf, 3)          # saturate term frequency
+        score += 5 * min(path_lower.count(t), 2)
     if matched == 0:
         return 0
     coverage = (matched / max(1, len(set(terms)))) ** 2

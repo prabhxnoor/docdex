@@ -161,6 +161,10 @@ class Project:
         return self.state_dir / ".sync.lock"
 
     @property
+    def index_db_path(self) -> Path:
+        return self.state_dir / "index.db"
+
+    @property
     def semantic_index_path(self) -> Path:
         return self.state_dir / "semantic_index.jsonl"
 

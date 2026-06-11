@@ -31,6 +31,19 @@ lands; nothing here has shipped in a tagged release yet.
   private, docdex used to read and cache that private file. Now it doesn't,
   unless you explicitly opt in. (Audit finding DDX-002.)
 
+### Added
+
+- **A real search engine under the hood (SQLite + FTS5, BM25 ranking).** `sync`
+  now builds a `_state/index.db` lexical index; `search` uses it automatically
+  when present. *In plain terms:* search is now both faster on big folders and
+  much harder to fool — a file that simply repeats a word can no longer beat
+  the file that actually answers your question. The plain-text caches are still
+  the source of truth; the database is just a rebuildable index, and docdex
+  falls back to the old scorer (with the same anti-stuffing fix) if a machine's
+  SQLite happens to lack FTS5. (Audit finding DDX-007.)
+- Per-chunk **token counting** (uses `tiktoken` when installed, a chars/4
+  estimate otherwise) — groundwork for token-budgeted context (see plan).
+
 ### Fixed
 
 - **Fuzzy search no longer reports junk as a real result.** `docdex semantic`

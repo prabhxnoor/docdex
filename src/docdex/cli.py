@@ -50,6 +50,19 @@ def cmd_status(args: argparse.Namespace) -> int:
     if s["no_text"]:
         print(f"  no-text files  : {len(s['no_text'])} (vision/OCR candidates — "
               "not errors)")
+    from docdex import index_db
+    if index_db.available(project):
+        import sqlite3
+        conn = index_db.connect(project)
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        except sqlite3.Error:
+            n = "?"
+        finally:
+            conn.close()
+        print(f"  lexical index  : sqlite/fts5, {n} chunks (BM25)")
+    else:
+        print("  lexical index  : not built")
     meta = semantic.status(project)
     if meta:
         print(f"  semantic index : backend={meta.get('backend')} "
@@ -76,14 +89,15 @@ def cmd_status(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------- sync
 def cmd_sync(args: argparse.Namespace) -> int:
     from docdex import dumps as dumpsmod
+    from docdex import index_db
     from docdex import prefetch as prefetchmod
     from docdex import semantic, vision
     from docdex.sync import SyncLocked, run_sync
     project = _project(args)
     if not args.no_prefetch and not args.dry_run:
-        print("[1/5] cloud prefetch")
+        print("[1/6] cloud prefetch")
         prefetchmod.run_prefetch(project, quiet=True)
-    print("[2/5] sync inventory + text caches")
+    print("[2/6] sync inventory + text caches")
     try:
         run_sync(project, dry_run=args.dry_run, no_hash=args.no_hash,
                  no_extract=args.no_extract, backfill=args.backfill)
@@ -91,14 +105,17 @@ def cmd_sync(args: argparse.Namespace) -> int:
         raise SystemExit(f"docdex: {e}")
     if args.dry_run:
         return 0
+    if not args.no_fts:
+        print("[3/6] lexical index (sqlite/fts5)")
+        index_db.build(project)
     if not args.no_dumps:
-        print("[3/5] context dumps")
+        print("[4/6] context dumps")
         dumpsmod.build_dumps(project, quiet=True)
     if not args.no_embed:
-        print("[4/5] semantic index")
+        print("[5/6] semantic index")
         semantic.build(project)
     if not args.no_vision:
-        print("[5/5] vision/OCR queue")
+        print("[6/6] vision/OCR queue")
         vision.create_queue(project, quiet=True)
     print("\ndone. `docdex status` for a summary.")
     return 0
@@ -106,11 +123,29 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
 # ------------------------------------------------------------------- search
 def cmd_search(args: argparse.Namespace) -> int:
-    from docdex.search import run_search, tokenize
+    from docdex import index_db
+    from docdex.search import run_search, snippet, tokenize
     project = _project(args)
-    if not tokenize(args.query):
+    terms = tokenize(args.query)
+    if not terms:
         print("query has no searchable terms", file=sys.stderr)
         return 2
+
+    # Prefer the BM25 (FTS5) engine; fall back to the cache scorer when the
+    # index hasn't been built or the local SQLite lacks FTS5.
+    try:
+        rows = index_db.search(project, args.query, folder=args.folder, limit=args.limit)
+        if not rows:
+            print(f"no indexed text matches: {args.query}", file=sys.stderr)
+            return 1
+        for rank, r in enumerate(rows, 1):
+            snip = snippet(r["text"], args.query, terms)
+            print(f"[#{rank}] score={r['score']}  {r['rel']}  chunk={r['chunk_index']}")
+            print(f"     {snip}\n")
+        return 0
+    except FileNotFoundError:
+        pass
+
     hits = run_search(project, args.query, folder=args.folder, limit=args.limit)
     if not hits:
         print(f"no indexed text matches: {args.query}", file=sys.stderr)
@@ -246,6 +281,7 @@ def main(argv=None) -> int:
     p.add_argument("--no-extract", action="store_true", help="inventory only")
     p.add_argument("--backfill", action="store_true", help="re-extract anything lacking a cache")
     p.add_argument("--no-prefetch", action="store_true", help="skip cloud placeholder prefetch")
+    p.add_argument("--no-fts", action="store_true", help="skip the SQLite/FTS5 lexical index")
     p.add_argument("--no-dumps", action="store_true", help="skip context dumps")
     p.add_argument("--no-embed", action="store_true", help="skip semantic index")
     p.add_argument("--no-vision", action="store_true", help="skip vision queue refresh")
