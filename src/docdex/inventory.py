@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,19 +56,34 @@ def read_inventory(path: Path) -> Dict[str, dict]:
         return rows
     try:
         with open(path, "r", encoding="utf-8", newline="") as f:
-            reader = csv.reader(f, delimiter="\t")
-            try:
-                header = next(reader)
-            except StopIteration:
-                return rows
-            for parts in reader:
-                if len(parts) != len(header):
-                    continue
-                row = dict(zip(header, parts))
-                row.setdefault("mtime_iso", "")
-                row.setdefault("sha1", "")
-                rows[row["path"]] = row
-    except (csv.Error, UnicodeDecodeError) as e:
+            text = f.read()
+    except (OSError, UnicodeDecodeError) as e:
+        raise StateError(
+            f"inventory is corrupt and could not be read ({e}). "
+            "Run `docdex sync` to rebuild it.")
+    # NUL bytes are valid UTF-8 but never appear in a well-formed inventory, so
+    # treat them as corruption. We check explicitly because Python's csv module
+    # raised on embedded NUL through 3.10 but silently accepts it from 3.11+ —
+    # without this guard, a corrupt inventory would parse into garbage rows on
+    # newer interpreters instead of failing cleanly.
+    if "\x00" in text:
+        raise StateError(
+            "inventory is corrupt (contains NUL bytes). "
+            "Run `docdex sync` to rebuild it.")
+    try:
+        reader = csv.reader(io.StringIO(text), delimiter="\t")
+        try:
+            header = next(reader)
+        except StopIteration:
+            return rows
+        for parts in reader:
+            if len(parts) != len(header):
+                continue
+            row = dict(zip(header, parts))
+            row.setdefault("mtime_iso", "")
+            row.setdefault("sha1", "")
+            rows[row["path"]] = row
+    except csv.Error as e:
         raise StateError(
             f"inventory is corrupt and could not be read ({e}). "
             "Run `docdex sync` to rebuild it.")

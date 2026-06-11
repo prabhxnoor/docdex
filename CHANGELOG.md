@@ -10,8 +10,25 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Nothing yet — see [docs/V0.2_PLAN.md](docs/V0.2_PLAN.md) for what's next (v0.3:
-field-alias registry, stemming/synonyms, optional reranking).
+### Fixed
+
+- **Corrupt-inventory detection now works the same on every Python version.** A
+  damaged inventory file containing binary junk (NUL bytes) is reliably reported
+  as corrupt instead of being parsed into garbage rows. *In plain terms:* Python
+  3.11+ quietly changed how it handles a certain kind of corrupt data, which made
+  one safety check pass on older Python but slip through on newer Python (and
+  turned the test suite red on GitHub). docdex now checks for itself rather than
+  relying on Python's behaviour, so the check is solid everywhere.
+
+### Docs
+
+- New top-level **[ROADMAP.md](ROADMAP.md)** — the living plan (what shipped, what's
+  next, and the open design questions), kept up to date across releases.
+- README now states plainly **what docdex is and isn't** — a context provider for
+  an AI agent, not a desktop/OS search engine.
+
+See [ROADMAP.md](ROADMAP.md) for what's planned next (retrieval quality, conflict/
+recency awareness, index lifecycle, adaptive budgets, Windows support).
 
 ## [0.2.0] — 2026-06-11 — "Trust & Context Foundations"
 

@@ -7,6 +7,12 @@
 - **LLM-native.** `docdex init` scaffolds `CLAUDE.md` / `AGENTS.md` instructions so any coding agent dropped into the folder knows exactly how to retrieve context cheaply, in tiers, instead of bulk-loading your corpus.
 - **Zero residue.** Everything docdex creates lives in three known places. `docdex purge` removes them completely.
 
+### What docdex is — and isn't
+
+docdex is a **context provider for an AI agent**, not a desktop search engine. Its job is to hand a coding agent (Claude Code, Codex, Gemini) *the specific context it needs to finish a task* — with citations, at the lowest possible token cost — so the model doesn't re-read your whole corpus every session. The headline command is **`docdex context "<task>"`**, which returns a packed, cited evidence brief sized to a token budget; the lower-level `search` and `semantic` commands exist to *support* that, not the other way round.
+
+It is **not** a replacement for Spotlight, `grep`, or your operating system's file search, and it isn't designed for you to sit and type queries into all day. Think of it as the retrieval layer an LLM calls on your behalf. The benchmarks below measure exactly that: context delivered to an agent per token spent, not human search ergonomics.
+
 ```
 $ cd ~/Work/MyCorpus
 $ docdex init
