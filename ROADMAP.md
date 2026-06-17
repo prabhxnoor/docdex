@@ -6,7 +6,7 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-06-12 (after v0.4.0)._
+> _Last updated: 2026-06-17 (added M7 — master-index curation + opt-in engine layer; reasoned from "should docdex auto-build the master index itself?")._
 
 ## North star
 
@@ -328,6 +328,47 @@ have at least one hard failure.
 - ⬜ Source-authority configuration (trust signed contracts over drafts).
 - ⬜ ANN/vector store for 100k+ files (only when a corpus actually needs it).
 
+### M7 — Generative helpers: auto-curated master index + the OCR runner  *(opt-in engine layer; preserves "docdex never calls an LLM itself")*
+
+Two artifacts users want populated *for* them — the `00_MASTER_INDEX.md` overview
+and vision/OCR notes — both need an LLM to **write**, which the North Star says the
+core must not do itself. The resolution is **not** to bake an LLM into the core, but
+to keep the deterministic core LLM-free and add **one opt-in, pluggable engine hook**
+that the *already-running agent* (or a configured CLI/API) drives. A single layer
+powers both jobs — and later M6 extraction.
+
+*Why not have docdex build the master index itself (e.g. on install):* it breaks the
+North Star — the core stays deterministic, offline, and private, and **never sends
+your documents to an LLM on its own**; there is no index to summarise until the first
+`sync` (so "on install" is too early); and an auto-written overview that is
+confidently wrong is the exact failure v0.4 fought ("never confidently wrong before
+more semantically broad"). *Why do it at all:* an empty stub is poor first-run UX, the
+curated overview is "the step that turns a search tool into a knowledge base," and a
+master index goes stale — an on-demand rebuild fixes that.
+
+- ⬜ **`docdex curate`** — turnkey master-index build. Assembles the file map +
+  per-folder snippets + a token budget, then either (a) prints the exact instruction
+  for the already-running agent to write `00_MASTER_INDEX.md` (default — no LLM inside
+  docdex), or (b) if an engine hook is configured, runs it and writes the file
+  directly. Before generating, it confirms the operator is running a top-tier reasoning
+  model and warns otherwise — it never pins a model ID (see decision #3). Never required;
+  everything else works with no master index.
+- ⬜ **Staleness nudge** — `status`/`sync` flag an empty or far-behind master index
+  and suggest `docdex curate`, so the overview can't silently rot.
+- ⬜ **Pluggable engine layer (opt-in, local-first; `DOCDEX_*_CMD` family)** — one
+  adapter interface (built-in/offline OCR · Gemini · Claude · OpenAI) shared by the
+  **vision/OCR runner** and `curate`. Productizes the external `run_pro.py` — model
+  fallback, circuit-breaker, page-render, authoritative no-text verdict — with PDF
+  passwords moved out of code into a user secret store. Off by default → the core
+  stays deterministic and private.
+- ⬜ **Trust rails** — a generated master index is marked machine-written + dated +
+  regenerable; `curate` never asserts beyond what the index supports; engine secrets
+  never live in the repo.
+
+> Relationship to M6: M6's "contextual chunks" summarise *individual* files for
+> indexing; M7 summarises the *whole corpus* (master index) and captions *visual*
+> sources (OCR). Same engine layer, different scope.
+
 ---
 
 ## Decisions & open questions
@@ -339,6 +380,31 @@ have at least one hard failure.
    built on **(b) flag-&-rank** as its prerequisite. Hard rails (see M3): it
    archives *index entries* not source files, stays **off by default**, and is
    **fully reversible + audit-logged** with a `--dry-run` preview. M2 ships first.
+
+2. **Should docdex build the master index itself (e.g. on install)? (M7)** —
+   *Reasoned 2026-06-17:* **No** to docdex calling an LLM on its own — it breaks the
+   North Star (deterministic, offline, private, "never confidently wrong"), and
+   nothing is indexed until the first `sync`. **Yes** to making it effortless: a
+   one-command, opt-in, agent-driven `docdex curate` + a staleness nudge, sharing the
+   same opt-in pluggable engine layer as the OCR runner. "Populated out of the box"
+   happens when an engine is configured or the running agent runs `curate`; with
+   nothing configured you still get a fresh index and a one-step prompt.
+
+3. **Which engines power the M7 generative layer? (M7)** — *Reasoned 2026-06-17,
+   data-backed:* split by task. **Master-index curation → the strongest reasoning model
+   available, confirmed at runtime — never a pinned model ID.** Curation is performed by
+   whatever agent is driving docdex (could be Codex, Gemini, a small or older model), so
+   `curate` does a **pre-flight check that the operator is on a top-tier reasoning model
+   and warns if it isn't** ("this looks like <engine> — the master index is high-leverage;
+   switch to your strongest reasoning model first?"). The *target class* is the strongest
+   reasoning model of the day (Opus 4.8 / Fable 5 at time of writing); writing a model
+   string into the tool is forbidden precisely so the guidance survives Opus 5, Fable 6,
+   etc. **OCR / vision → Gemini** (`gemini-3.1-pro-preview`, `gemini-3-flash-preview` as
+   quota fallback) — top general-purpose frontier model for document parsing (OmniDocBench
+   ~90.3, lowest edit distance ~0.115, 1M context, lowest frontier cost), already proven in
+   `run_pro.py`. "Antigravity" is Google's agentic IDE, not an OCR engine — out of scope.
+   Optional later: a local/offline OCR engine (GLM-OCR / PaddleOCR-VL beat frontier LLMs on
+   raw OCR) for fully-private runs.
 
 **Open**
 
