@@ -216,7 +216,7 @@ grouping, a live/archived index flag separate from source deletion, a last-used
 signal, and the shared path-confinement helper that Phase 3's DDX-028 fix
 introduces. *"Lifecycle features are where boundary assumptions regress."*
 
-The thematic detail for each milestone (M1–M6) follows.
+The thematic detail for each milestone (M1–M7) follows.
 
 ---
 
@@ -376,7 +376,7 @@ master index goes stale — an on-demand rebuild fixes that.
 **Decided**
 
 1. **How smart should the index get about old / superseded information? (M2+M3)** —
-   *Decided 2026-06-11:_ go all the way to **option (c), opt-in auto-archival**,
+   *Decided 2026-06-11:* go all the way to **option (c), opt-in auto-archival**,
    built on **(b) flag-&-rank** as its prerequisite. Hard rails (see M3): it
    archives *index entries* not source files, stays **off by default**, and is
    **fully reversible + audit-logged** with a `--dry-run` preview. M2 ships first.
