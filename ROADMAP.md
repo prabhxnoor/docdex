@@ -6,7 +6,7 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-06-18 (shipped v0.4.1 — one hidden `.docdex/` home + external per-machine state cache + `docdex migrate`; reasoned from the two-laptop / OneDrive-sync question)._
+> _Last updated: 2026-06-18 (shipped v0.4.1 — hidden `.docdex/` home + external per-machine state cache + `docdex migrate`; added the "lean by default / leave-no-bloat" hygiene discipline to the North star + M3, and self-cleaning OCR scratch to M7, after an external OCR run left ~11 GB of scratch behind)._
 
 ## North star
 
@@ -19,6 +19,13 @@ over.
 
 Success is measured as **task-context recall at a token budget**: did the agent
 get *enough* of the right context to do the job, while wasting few tokens?
+
+**Lean by default.** docdex must stay the kind of tool a top-tier engineer would
+ship: fast, token-efficient, accurate — and with **zero bloat left behind**. Every
+feature cleans up after itself; rebuildable state is bounded and pruned; ephemeral
+scratch is always removed; nothing multi-GB ever lingers waiting for a human to
+delete it. Storage hygiene is a *feature* (tracked in M3) and a release-checklist
+item — never an afterthought.
 
 ---
 
@@ -293,8 +300,19 @@ lose a document.
 
 Build order:
 
-- ⬜ **DB hygiene** — periodic `optimize`/`VACUUM`, prune rows for deleted files,
-  rotate `inventory_history`. *(Cheap; ships first.)*
+- ⬜ **Storage hygiene — leave no bloat (cross-cutting; ships first).** A
+  first-class discipline every feature obeys: SQLite `optimize`/`VACUUM` and pruned
+  rows for deleted files; rotate `inventory_history`; **bounded caches** (size cap +
+  LRU/age prune, never unbounded growth); **orphan-cache pruning** — drop
+  `~/.cache/docdex/<id>` dirs whose project root no longer exists (the cache's
+  `meta.json` records that root, so this is safe and automatic); **guaranteed
+  ephemeral-temp cleanup** (all scratch under one temp root, removed on success and
+  swept on the next run after a crash); a `docdex gc` command and a `doctor`/`status`
+  line that reports cache + scratch size so bloat is visible. Modeled on the
+  best-in-class — `git gc`, `npm cache verify`/`clean`, `cargo`'s cache GC, XDG cache
+  conventions — adapted to docdex's "rebuildable state is disposable" design.
+  *Principle: nothing docdex writes should outlive its usefulness or sit multi-GB
+  waiting for manual removal.*
 - ⬜ **Usage/recency signals** — record what gets retrieved + last-seen, to drive
   both ranking (M2) and the archival rules.
 - ⬜ **Opt-in auto-archival engine** — rule evaluation, the `_state/archive/`
@@ -369,6 +387,15 @@ master index goes stale — an on-demand rebuild fixes that.
   fallback, circuit-breaker, page-render, authoritative no-text verdict — with PDF
   passwords moved out of code into a user secret store. Off by default → the core
   stays deterministic and private.
+- ⬜ **Self-cleaning by design — no GB left behind.** The OCR/engine runner treats
+  its render cache, exported page images, and per-call session logs as *ephemeral*:
+  all scratch lives under one known temp root, is removed automatically once a note
+  is written (and swept on the next run if a crash interrupted it), and never
+  accumulates. `docdex vision clean` reclaims anything stranded; `doctor` reports
+  scratch size. *(Concrete lesson from the v0.4.1 cleanup: an external Gemini OCR
+  run left ~11 GB — a render cache plus ~16k session files — sitting in
+  `~/.gemini/tmp` long after the notes were finished. The productized runner must
+  never strand scratch like that.)*
 - ⬜ **Trust rails** — a generated master index is marked machine-written + dated +
   regenerable; `curate` never asserts beyond what the index supports; engine secrets
   never live in the repo.
