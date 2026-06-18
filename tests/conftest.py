@@ -54,6 +54,20 @@ def make_xlsx(path: Path, cells) -> None:
     wb.save(str(path))
 
 
+def make_encrypted_pdf(text: str, password: str) -> bytes:
+    """An RC4-128 password-encrypted one-page PDF wrapping make_pdf(text)."""
+    import io
+    from pypdf import PdfReader, PdfWriter
+
+    writer = PdfWriter()
+    for page in PdfReader(io.BytesIO(make_pdf(text))).pages:
+        writer.add_page(page)
+    writer.encrypt(user_password=password, algorithm="RC4-128")
+    buf = io.BytesIO()
+    writer.write(buf)
+    return buf.getvalue()
+
+
 @pytest.fixture
 def corpus(tmp_path: Path) -> Path:
     """A small synthetic document corpus (no docdex project yet)."""
