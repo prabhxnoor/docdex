@@ -14,6 +14,25 @@ Next: **v0.5.0** — meaning-aware search (aliases, stemming, reranking) so "leg
 name" finds "Vendor", plus recency/authority weighting on the conflict layer. See
 [ROADMAP.md](ROADMAP.md).
 
+### Added
+
+- **Password-protected PDFs are now extracted.** When a PDF is encrypted, docdex
+  tries passwords from an optional, user-controlled `.docdex.secrets.json` at the
+  project root — a hidden file the indexer never reads and that never enters the
+  repo — keyed by a substring of the file's path (an empty-string key applies
+  corpus-wide). *In plain terms:* locked statements / registration PDFs that used
+  to fail now index, and the password is never hard-coded into the tool. Surfaced
+  by the first real-corpus build, where 70 of 71 extraction failures were locked PDFs.
+
+### Fixed
+
+- **Quieted the extraction-time warning flood.** pdfminer's "Cannot set gray
+  color … invalid float value" / "FontBBox" chatter (hundreds of lines per
+  malformed PDF) and openpyxl's "extension not supported" warnings are now
+  silenced during extraction; set `DOCDEX_DEBUG=1` to restore them. *In plain
+  terms:* a real error in the sync log is no longer buried under thousands of
+  harmless warnings.
+
 ## [0.4.0] — 2026-06-12 — "A packet you can trust"
 
 Closes every finding from the independent round-3 audit (4 critical + 5 major +

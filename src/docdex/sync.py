@@ -113,6 +113,7 @@ class _Extractor:
         self.project = project
         self.statuses = statuses
         self.allow_large = allow_large
+        self.secrets = ex.read_secrets(project.root)  # optional PDF password map
         self.error_lines: list = []
         self.counts = {"ok": 0, "empty": 0, "failed": 0, "unsupported": 0,
                        "skipped": 0}
@@ -149,7 +150,8 @@ class _Extractor:
                 pass
         dest.parent.mkdir(parents=True, exist_ok=True)
         try:
-            text = ex.extract(str(abs_path))
+            text = ex.extract(str(abs_path),
+                              passwords=ex.candidate_passwords(rel, self.secrets))
         except Exception as e:  # noqa: BLE001 - any parser error is a data point
             self.error_lines.append(f"FAIL\t{rel}\t{type(e).__name__}: {e}")
             self._record(rel, "failed", detail=f"{type(e).__name__}: {e}"[:300])

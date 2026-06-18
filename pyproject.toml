@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "build"]
+dev = ["pytest>=7.0", "build", "pypdf>=4.0"]
 
 [project.scripts]
 docdex = "docdex.cli:main"

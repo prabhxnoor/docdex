@@ -6,9 +6,23 @@ platforms they are reported as unsupported rather than failing.
 """
 from __future__ import annotations
 
+import json
+import logging
+import os
 import subprocess
 import sys
+import warnings
 from pathlib import Path
+
+# Quiet the noisy third-party extractor chatter: pdfminer emits hundreds of
+# "Cannot set gray color … invalid float value" / "FontBBox" lines on real-world
+# PDFs, and openpyxl warns about unsupported spreadsheet extensions. Neither is a
+# failure (extraction proceeds), but the flood buries real errors. Set DOCDEX_DEBUG
+# in the environment to restore the original verbosity.
+if not os.environ.get("DOCDEX_DEBUG"):
+    logging.getLogger("pdfminer").setLevel(logging.ERROR)
+
+SECRETS_FILENAME = ".docdex.secrets.json"
 
 TEXT_EXTENSIONS = {
     ".txt", ".md", ".csv", ".json", ".html", ".htm", ".py", ".js", ".ts",
@@ -76,24 +90,52 @@ def extract_pptx(path: str) -> str:
 
 def extract_xlsx(path: str) -> str:
     import openpyxl
-    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     parts = []
-    try:
-        for sheet in wb.sheetnames:
-            ws = wb[sheet]
-            parts.append(f"\n=== SHEET: {sheet} ===")
-            for row in ws.iter_rows(values_only=True):
-                cells = ["" if v is None else str(v) for v in row]
-                if any(c.strip() for c in cells):
-                    parts.append("\t".join(cells))
-    finally:
-        wb.close()
+    with warnings.catch_warnings():
+        if not os.environ.get("DOCDEX_DEBUG"):
+            warnings.simplefilter("ignore")  # openpyxl "extension not supported" noise
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        try:
+            for sheet in wb.sheetnames:
+                ws = wb[sheet]
+                parts.append(f"\n=== SHEET: {sheet} ===")
+                for row in ws.iter_rows(values_only=True):
+                    cells = ["" if v is None else str(v) for v in row]
+                    if any(c.strip() for c in cells):
+                        parts.append("\t".join(cells))
+        finally:
+            wb.close()
     return "\n".join(parts)
 
 
-def extract_pdf(path: str) -> str:
+def read_secrets(root) -> dict:
+    """Load the optional, user-controlled password map from
+    `<root>/.docdex.secrets.json`. Missing or corrupt → empty dict (never raises).
+    It is a hidden dotfile, so the walker never indexes it; it is never committed
+    to the docdex repo and its values are never logged."""
+    try:
+        data = json.loads((Path(root) / SECRETS_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def candidate_passwords(rel_path: str, secrets: dict) -> list:
+    """Passwords whose key is a substring of the file's path. An empty-string key
+    matches every path (a deliberate corpus-wide fallback)."""
+    return [pw for key, pw in secrets.items() if key in rel_path]
+
+
+def extract_pdf(path: str, passwords=()) -> str:
     from pdfminer.high_level import extract_text
-    return extract_text(path) or ""
+    from pdfminer.pdfdocument import PDFPasswordIncorrect
+    last_err = None
+    for pw in ("", *passwords):  # try unencrypted / owner-readable first, then candidates
+        try:
+            return extract_text(path, password=pw) or ""
+        except PDFPasswordIncorrect as e:
+            last_err = e
+    raise last_err  # encrypted and no candidate password worked
 
 
 def extract_plain(path: str) -> str:
@@ -111,8 +153,11 @@ def extract_with_textutil(path: str) -> str:
     return r.stdout
 
 
-def extract(path) -> str:
-    """Return extracted text, or an `[unsupported ...]` marker string."""
+def extract(path, passwords=()) -> str:
+    """Return extracted text, or an `[unsupported ...]` marker string.
+
+    `passwords` are candidate passwords tried (in order) for an encrypted PDF;
+    callers build them with `read_secrets` + `candidate_passwords`."""
     p = Path(path)
     ext = p.suffix.lower()
     if ext == ".docx":
@@ -122,7 +167,7 @@ def extract(path) -> str:
     if ext in (".xlsx", ".xlsm"):
         return extract_xlsx(str(p))
     if ext == ".pdf":
-        return extract_pdf(str(p))
+        return extract_pdf(str(p), passwords=passwords)
     if ext in TEXTUTIL_EXTENSIONS:
         if textutil_available():
             return extract_with_textutil(str(p))
