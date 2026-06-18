@@ -1,12 +1,15 @@
 """`docdex init` and `docdex purge` — project scaffolding with zero residue.
 
-init creates exactly three things in the project root:
-  1. `.docdex.json`      — the project marker/config
-  2. `<index_dir>/`      — index folder (Update/, vision_notes/, _state/, docs)
-  3. `./ctx`             — optional wrapper script (plus CLAUDE.md/AGENTS.md
-                            unless --no-agent-docs)
+init creates one hidden in-project home plus the agent docs:
+  1. `.docdex/`          — home: the config.json marker, Update/, vision_notes/,
+                            curated docs (secrets.json is added on demand)
+  2. `CLAUDE.md`/`AGENTS.md` — LLM entry points at the root (unless
+                            --no-agent-docs); an optional `./<wrapper>` script
+                            is created only if one is requested
 
-purge removes them and nothing else.
+The big rebuildable state lives OUTSIDE the project in a per-machine cache
+(see `docdex.config.cache_base`). purge removes the home, that external cache,
+and any wrapper — and nothing else.
 """
 from __future__ import annotations
 
@@ -17,8 +20,8 @@ from pathlib import Path
 from typing import Optional
 
 from docdex.config import (
-    DEFAULT_INDEX_DIR, DEFAULT_WRAPPER, MARKER_NAME, NotAProject, Project,
-    ensure_state_dirs,
+    CONFIG_NAME, DEFAULT_INDEX_DIR, LEGACY_MARKER_NAME, LEGACY_SECRETS_NAME,
+    NotAProject, Project, cache_base, ensure_state_dirs, is_within,
 )
 from docdex.inventory import sha1_of
 
@@ -33,19 +36,19 @@ HANDOFF_TEMPLATE = """# {index_dir} — Operating manual
 Token-efficient local index over the documents in this project. Front door:
 
 ```bash
-./{wrapper} status                         # freshness + cache coverage
-./{wrapper} sync                           # (re)index everything
-./{wrapper} context "your task" --budget 3000   # token-budgeted evidence packet
-./{wrapper} search "exact words or topic"  # BM25 keyword search
-./{wrapper} semantic "rough description"   # fuzzy search
-./{wrapper} doctor                         # integrity checks (--e2e for a self-test)
+{cmd} status                         # freshness + cache coverage
+{cmd} sync                           # (re)index everything
+{cmd} context "your task" --budget 3000   # token-budgeted evidence packet
+{cmd} search "exact words or topic"  # BM25 keyword search
+{cmd} semantic "rough description"   # fuzzy search
+{cmd} doctor                         # integrity checks (--e2e for a self-test)
 ```
 
 ## How to gather context for a task (cheapest first)
 
-1. **`./{wrapper} context "the task" --budget N`** — the preferred move. Returns a
+1. **`{cmd} context "the task" --budget N`** — the preferred move. Returns a
    compact packet: cited answers, evidence excerpts, what's missing, and a
-   suggested follow-up. For a form, `./{wrapper} context --from-file form.md`.
+   suggested follow-up. For a form, `{cmd} context --from-file form.md`.
 2. `00_MASTER_INDEX.md` — curated overview, if one has been written.
 3. `search` / `semantic` — ranked snippets when you need to drill in.
 4. A specific extracted cache under `_state/extracted/`, or the source file.
@@ -57,14 +60,14 @@ the gaps it reports.
 ## Updating
 
 Drop new files anywhere (preferably `{index_dir}/Update/`), edit or delete
-files in place, then run `./{wrapper} sync`. Sync never moves or modifies
+files in place, then run `{cmd} sync`. Sync never moves or modifies
 source files; deletions are soft-deleted to `_state/inventory_history.tsv`.
 
 ## Vision / OCR
 
-`./{wrapper} vision create` queues images, image-only PDFs, and low-text files in
+`{cmd} vision create` queues images, image-only PDFs, and low-text files in
 `_state/vision_tasks/manifest.tsv`. Write notes to `{index_dir}/vision_notes/`
-(format in `_state/vision_tasks/VISION_TASKS.md`), then run `./{wrapper} sync` —
+(format in `_state/vision_tasks/VISION_TASKS.md`), then run `{cmd} sync` —
 notes are part of the indexed tree and become searchable immediately.
 """
 
@@ -94,22 +97,23 @@ This project is indexed by [docdex](https://github.com/prabhxnoor/docdex).
 
 ## Start every session
 
-Run `./{wrapper} status`. If it reports STALE or cache gaps, tell the user and
-ask whether to run `./{wrapper} sync` before doing context-dependent work.
+Run `{cmd} status`. If it reports STALE or cache gaps, tell the user and
+ask whether to run `{cmd} sync` before doing context-dependent work.
 Then read `{index_dir}/HANDOFF.md`.
 
 ## Hard rules
 
-1. To gather context for a task, prefer `./{wrapper} context "<task>" --budget N`
+1. To gather context for a task, prefer `{cmd} context "<task>" --budget N`
    (a cited, token-budgeted evidence packet) over reading files. Then escalate
-   only for gaps: `00_MASTER_INDEX.md` -> a topical file -> `./{wrapper} search`
-   / `./{wrapper} semantic` -> a specific source file. Never bulk-load the
+   only for gaps: `00_MASTER_INDEX.md` -> a topical file -> `{cmd} search`
+   / `{cmd} semantic` -> a specific source file. Never bulk-load the
    corpus, all topical files, or the semantic index at once.
 2. Never move source files programmatically (cloud-sync links break on moves).
-3. Use the `./{wrapper}` front door rather than reimplementing indexing ad hoc.
+3. Use the `{cmd}` front door rather than reimplementing indexing ad hoc.
 4. Don't refresh curated `NN_*.md` files automatically — confirm with the user.
-5. Freshness lives in `{index_dir}/_state/inventory.tsv` (`mtime_iso` + `sha1`);
-   don't guess from filenames.
+5. Freshness lives in docdex's state cache; run `{cmd} status` to check it
+   (don't guess from filenames). The state cache is per-machine and outside
+   this folder, so run `{cmd} sync` on each computer after pulling new files.
 """
 
 AGENTS_MD_TEMPLATE = """# {project_name} — agent instructions
@@ -120,14 +124,14 @@ This directory is a docdex-indexed document corpus. Non-Claude agents
 
 Quick reference:
 
-- `./{wrapper} status` — freshness; sync first if stale.
-- `./{wrapper} sync` — reindex incrementally.
-- `./{wrapper} context "the task" --budget N` — **preferred:** a cited,
+- `{cmd} status` — freshness; sync first if stale.
+- `{cmd} sync` — reindex incrementally.
+- `{cmd} context "the task" --budget N` — **preferred:** a cited,
   token-budgeted evidence packet (answers, excerpts, what's missing). For a
-  form, `./{wrapper} context --from-file form.md`.
-- `./{wrapper} search "words"` / `./{wrapper} semantic "description"` — drill into
+  form, `{cmd} context --from-file form.md`.
+- `{cmd} search "words"` / `{cmd} semantic "description"` — drill into
   specific snippets when `context` leaves a gap.
-- `./{wrapper} doctor` — integrity checks.
+- `{cmd} doctor` — integrity checks.
 
 Prefer `context` over reading files; load curated summaries before raw files;
 ask targeted questions instead of guessing; never move the user's source files.
@@ -147,13 +151,14 @@ def _write_if_missing(path: Path, text: str) -> bool:
 
 
 def run_init(root: Path, index_dir: str = DEFAULT_INDEX_DIR,
-             wrapper: Optional[str] = DEFAULT_WRAPPER,
+             wrapper: Optional[str] = None,
              agent_docs: bool = True, quiet: bool = False) -> Project:
     root = root.resolve()
-    if (root / MARKER_NAME).exists():
+    if (root / DEFAULT_INDEX_DIR / CONFIG_NAME).exists() or \
+            (root / LEGACY_MARKER_NAME).exists():
         project = Project.load(root)
         if not quiet:
-            print(f"already initialized (index dir: {project.index_dir_name}); nothing changed")
+            print(f"already initialized (home: {project.index_dir_name}/); nothing changed")
         return project
     try:
         outer = Project.discover(root)
@@ -168,9 +173,9 @@ def run_init(root: Path, index_dir: str = DEFAULT_INDEX_DIR,
     ensure_state_dirs(project)
     project.save()
 
+    cmd = f"{cmd}" if wrapper else "docdex"
     fmt = {
-        "project_name": root.name, "index_dir": index_dir,
-        "wrapper": wrapper or "ctx",
+        "project_name": root.name, "index_dir": index_dir, "cmd": cmd,
     }
     scaffold = [
         (project.index_dir / "HANDOFF.md", HANDOFF_TEMPLATE.format(**fmt)),
@@ -202,16 +207,22 @@ def run_init(root: Path, index_dir: str = DEFAULT_INDEX_DIR,
 
     if not quiet:
         print(f"docdex project initialized at {root}")
-        print(f"  index dir : {index_dir}/")
+        print(f"  home      : {index_dir}/  (in project)")
+        print(f"  cache     : {project.cache_dir}  (per-machine, external)")
         if wrapper:
-            print(f"  wrapper   : ./{wrapper}")
+            print(f"  wrapper   : {cmd}")
         print("\nNext: run "
-              f"{'./' + wrapper + ' sync' if wrapper else 'docdex sync'} to build the index.")
+              f"{cmd} sync to build the index.")
     return project
 
 
 def purge_targets(project: Project) -> list:
-    targets = [project.index_dir, project.marker_path]
+    """In-project things `purge` deletes: the home, any legacy root files, and
+    the wrapper. The external cache is handled separately (different guard)."""
+    targets = [project.index_dir]
+    for p in (project.legacy_marker_path, project.root / LEGACY_SECRETS_NAME):
+        if p.exists():
+            targets.append(p)
     if project.wrapper_name:
         wrapper = project.root / project.wrapper_name
         if wrapper.exists():
@@ -221,26 +232,35 @@ def purge_targets(project: Project) -> list:
 
 def run_purge(project: Project, yes: bool = False, state_only: bool = False,
               quiet: bool = False) -> int:
-    # Confinement guard (DDX-028): in either mode, never delete `_state/` — or
-    # anything — through a symlinked or out-of-root index dir. Same check the
-    # write path uses, so write and delete agree on what is in-bounds.
+    # Confinement guards (DDX-028): never operate through a symlinked or
+    # out-of-bounds home (same check the write path uses), and for v2 never
+    # through a cache dir that escapes the cache base.
     err = project.index_confinement_error()
     if err:
         if not quiet:
             print(f"refusing to purge: {err}")
         return 2
+    if not project.legacy:
+        serr = project.state_confinement_error()
+        if serr:
+            if not quiet:
+                print(f"refusing to purge: {serr}")
+            return 2
+
+    def _state_in_bounds() -> bool:
+        s = project.state_dir
+        if s.is_symlink():
+            return False
+        return project.is_within_root(s) if project.legacy else is_within(s, cache_base())
+
     if state_only:
         state = project.state_dir
-        # Belt-and-suspenders: even with a safe index dir, refuse if `_state`
-        # itself is a symlink or resolves outside the project.
-        if state.is_symlink() or (state.exists() and not project.is_within_root(state)):
+        if state.exists() and not _state_in_bounds():
             if not quiet:
-                print(f"refusing to clear state: {state.name}/ resolves "
-                      "outside the project")
+                print(f"refusing to clear state: {state} resolves out of bounds")
             return 2
         if not yes:
-            print(f"would remove: {project.rel_to_root(state)}/ "
-                  "(re-run with --yes to confirm)")
+            print(f"would remove state: {state} (re-run with --yes to confirm)")
             return 1
         if state.exists():
             shutil.rmtree(state)
@@ -251,10 +271,14 @@ def run_purge(project: Project, yes: bool = False, state_only: bool = False,
 
     curated = [p.name for p in project.index_dir.glob("[0-9][0-9]_*.md")]
     notes = list(project.notes_dir.glob("*.md")) if project.notes_dir.exists() else []
+    cache = project.cache_dir
+    purge_cache = (not project.legacy) and cache.exists() and is_within(cache, cache_base())
     if not yes:
         print("purge would remove:")
         for t in purge_targets(project):
             print(f"  - {project.rel_to_root(t)}")
+        if purge_cache:
+            print(f"  - {cache}  (external per-machine cache)")
         if curated:
             print(f"  ! includes {len(curated)} curated topical file(s): {curated[:5]}")
         if notes:
@@ -272,6 +296,8 @@ def run_purge(project: Project, yes: bool = False, state_only: bool = False,
             shutil.rmtree(t)
         else:
             t.unlink(missing_ok=True)
+    if purge_cache:
+        shutil.rmtree(cache)  # guarded above: exists and within the cache base
     if not quiet:
         print(f"purged. {project.root} no longer contains any docdex files.")
         leftover = [n for n in ("CLAUDE.md", "AGENTS.md") if (project.root / n).exists()]

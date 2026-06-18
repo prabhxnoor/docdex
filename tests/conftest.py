@@ -12,6 +12,13 @@ if str(SRC) not in sys.path:
 from docdex.config import Project, ensure_state_dirs  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _isolated_docdex_cache(tmp_path, monkeypatch):
+    """Every test's external state goes to a throwaway dir, never real ~/.cache."""
+    monkeypatch.setenv("DOCDEX_CACHE_DIR", str(tmp_path / "_docdex_cache"))
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+
+
 def make_pdf(text: str) -> bytes:
     """Build a minimal but structurally valid one-page PDF."""
     stream = f"BT /F1 18 Tf 72 720 Td ({text}) Tj ET".encode("latin-1")
@@ -101,7 +108,7 @@ def corpus(tmp_path: Path) -> Path:
 @pytest.fixture
 def project(corpus: Path) -> Project:
     """An initialized (but not yet synced) docdex project over the corpus."""
-    p = Project.create(corpus, index_dir="_index")
+    p = Project.create(corpus)  # default v2 home: .docdex/
     ensure_state_dirs(p)
     p.save()
     return p

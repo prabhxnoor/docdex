@@ -14,12 +14,41 @@ Next: **v0.5.0** — meaning-aware search (aliases, stemming, reranking) so "leg
 name" finds "Vendor", plus recency/authority weighting on the conflict layer. See
 [ROADMAP.md](ROADMAP.md).
 
+## [0.4.1] — 2026-06-18 — "One tidy home, state out of the cloud"
+
+A storage-layout overhaul so a synced project folder stays clean and two
+machines sharing one cloud-synced folder never corrupt each other's index —
+plus the password-PDF and quiet-extractor fixes from the first real-corpus
+build. Existing projects upgrade automatically with `docdex migrate`. 167 tests.
+
+### Changed
+
+- **One hidden home in the project; the heavy state moved out of it.** docdex now
+  keeps a single hidden `.docdex/` folder in your project — the `config.json`
+  marker, the optional `secrets.json`, your `vision_notes/`, the `Update/` inbox,
+  and curated docs — and puts all the big, rebuildable state (extracted caches,
+  the SQLite index, the semantic index) in a per-machine cache OUTSIDE the
+  project: `~/.cache/docdex/<project>-<id>/` by default, overridable with
+  `DOCDEX_CACHE_DIR` or `XDG_CACHE_HOME`. *In plain terms:* your documents folder
+  is no longer cluttered, and if you sync it across two computers each keeps its
+  own search index instead of both writing one shared database through the cloud
+  — which file-sync tools (OneDrive/Dropbox/iCloud) are known to corrupt.
+- **`init` no longer drops a `./ctx` wrapper or a root marker by default.** The
+  project root gets just the hidden `.docdex/` plus `CLAUDE.md`/`AGENTS.md`; opt
+  into a wrapper script with `--wrapper NAME`.
+
 ### Added
 
+- **`docdex migrate`** upgrades an existing v1 project (root `.docdex.json` +
+  in-project `_index/_state`) to the new layout: it consolidates the durable
+  content into `.docdex/`, drops the rebuildable state (rebuilt on the next sync),
+  and rewrites the marker. Idempotent and safe to run on each machine; `--dry-run`
+  shows the plan and changes nothing. A v1 project keeps working unchanged until
+  you migrate it.
 - **Password-protected PDFs are now extracted.** When a PDF is encrypted, docdex
-  tries passwords from an optional, user-controlled `.docdex.secrets.json` at the
-  project root — a hidden file the indexer never reads and that never enters the
-  repo — keyed by a substring of the file's path (an empty-string key applies
+  tries passwords from an optional, user-controlled secrets file (`.docdex/secrets.json`,
+  or the legacy `.docdex.secrets.json`) — never indexed, never in the repo —
+  keyed by a substring of the file's path (an empty-string key applies
   corpus-wide). *In plain terms:* locked statements / registration PDFs that used
   to fail now index, and the password is never hard-coded into the tool. Surfaced
   by the first real-corpus build, where 70 of 71 extraction failures were locked PDFs.
@@ -32,6 +61,14 @@ name" finds "Vendor", plus recency/authority weighting on the conflict layer. Se
   silenced during extraction; set `DOCDEX_DEBUG=1` to restore them. *In plain
   terms:* a real error in the sync log is no longer buried under thousands of
   harmless warnings.
+
+### Safety
+
+- The external cache carries the same confinement guard as the in-project home:
+  docdex refuses to write — or, in `purge`, delete — through a symlinked or
+  out-of-bounds cache dir, so a tampered cache can never steer an operation
+  elsewhere. `purge` removes the home **and** that project's external cache (each
+  under its own guard) and nothing else; source documents are never touched.
 
 ## [0.4.0] — 2026-06-12 — "A packet you can trust"
 

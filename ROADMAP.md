@@ -6,7 +6,7 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-06-17 (added M7 — master-index curation + opt-in engine layer; reasoned from "should docdex auto-build the master index itself?")._
+> _Last updated: 2026-06-18 (shipped v0.4.1 — one hidden `.docdex/` home + external per-machine state cache + `docdex migrate`; reasoned from the two-laptop / OneDrive-sync question)._
 
 ## North star
 
@@ -102,6 +102,14 @@ foundation is solid enough to build them safely.
   hidden; scaffold fingerprinting (an edited `CLAUDE.md` surfaces); zero-field and
   duplicate form-label fixes. 124 tests; the form benchmark holds at 8/11 with now-
   *correct* values, and a real-CLI "make the packet lie" smoke passed.
+- **v0.4.1 — "One tidy home, state out of the cloud"** (2026-06-18): storage-layout
+  overhaul — one hidden `.docdex/` home in the project; all rebuildable state moved
+  to a per-machine external cache (`~/.cache/docdex/`), so a cloud-synced folder
+  stays clean and two machines syncing it never corrupt one shared index. New
+  `docdex migrate` (idempotent, `--dry-run`) upgrades v1 projects, which keep
+  working until migrated. Folds in the real-corpus fixes (password-protected PDFs;
+  quieted extractor warnings). 167 tests. Reasoned from the two-laptop / OneDrive
+  sync question.
 
 ---
 

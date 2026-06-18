@@ -33,7 +33,11 @@ def iter_source_files(project: Project) -> Iterator[Tuple[str, Path]]:
 
         kept = []
         for d in sorted(dirnames):
-            if d in project.skip_dirs or d.startswith("."):
+            sub = f"{rel}/{d}" if rel else d
+            # The project's own home dir is exempt from the skip/dot rules so we
+            # can descend into it to reach Update/ and vision_notes/ — the v2
+            # home is hidden (`.docdex`) and would otherwise be dropped here.
+            if sub != index_name and (d in project.skip_dirs or d.startswith(".")):
                 continue
             # A symlinked directory is not descended into (followlinks=False),
             # but skip it explicitly too unless the project opted in and the
@@ -42,7 +46,6 @@ def iter_source_files(project: Project) -> Iterator[Tuple[str, Path]]:
             if dpath.is_symlink() and not (
                     project.follow_symlinks and project.is_within_root(dpath)):
                 continue
-            sub = f"{rel}/{d}" if rel else d
             if sub == index_name:
                 kept.append(d)  # descend so we can reach Update/ and notes
                 continue

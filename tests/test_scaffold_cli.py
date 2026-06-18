@@ -15,12 +15,13 @@ SRC = str(Path(__file__).resolve().parents[1] / "src")
 
 def test_init_creates_exactly_the_documented_files(corpus):
     run_init(corpus, quiet=True)
-    assert (corpus / MARKER_NAME).is_file()
-    assert (corpus / "_index" / "HANDOFF.md").is_file()
-    assert (corpus / "_index" / "Update" / "README.md").is_file()
-    assert (corpus / "_index" / "vision_notes" / "README.md").is_file()
-    wrapper = corpus / "ctx"
-    assert wrapper.is_file() and os.access(wrapper, os.X_OK)
+    assert (corpus / ".docdex" / "config.json").is_file()
+    assert (corpus / ".docdex" / "HANDOFF.md").is_file()
+    assert (corpus / ".docdex" / "Update" / "README.md").is_file()
+    assert (corpus / ".docdex" / "vision_notes" / "README.md").is_file()
+    # no wrapper and no legacy root marker by default — the root stays clean
+    assert not (corpus / "ctx").exists()
+    assert not (corpus / MARKER_NAME).exists()
     assert (corpus / "CLAUDE.md").is_file()
     assert (corpus / "AGENTS.md").is_file()
 
@@ -37,16 +38,16 @@ def test_purge_leaves_zero_residue(corpus):
     project = run_init(corpus, quiet=True)
 
     assert run_purge(project, yes=False) == 1  # dry refusal
-    assert (corpus / MARKER_NAME).exists()
+    assert project.config_path.exists()
+    assert project.cache_dir.exists()
 
     assert run_purge(project, yes=True, quiet=True) == 0
     after = {p.relative_to(corpus) for p in corpus.rglob("*")}
     leftover = after - before
     # CLAUDE.md/AGENTS.md are deliberately kept (may carry user edits)
     assert leftover == {Path("CLAUDE.md"), Path("AGENTS.md")}
-    assert not (corpus / MARKER_NAME).exists()
-    assert not (corpus / "_index").exists()
-    assert not (corpus / "ctx").exists()
+    assert not (corpus / ".docdex").exists()
+    assert not project.cache_dir.exists()  # external cache removed too
 
 
 def run_cli(corpus, *argv):
@@ -107,4 +108,4 @@ def test_cli_version(tmp_path):
 def test_project_load_with_explicit_root(corpus):
     run_init(corpus, quiet=True)
     p = Project.load(corpus)
-    assert p.index_dir_name == "_index"
+    assert p.index_dir_name == ".docdex"
