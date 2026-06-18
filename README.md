@@ -19,7 +19,7 @@ $ docdex init
 $ docdex sync
 $ docdex search "liability cap in the Acme master agreement"
 [#1] score=412  Contracts/Acme/MSA final v3 (signed).pdf
-     cache: _index/_state/extracted/Contracts/...
+     cache: ~/.cache/docdex/MyCorpus-<id>/_state/extracted/Contracts/...
      ...limitation of liability shall not exceed the fees paid in the twelve (12) months...
 ```
 
@@ -97,14 +97,14 @@ For a form, `./ctx context --from-file vendor_form.md --budget 3000` retrieves e
 **One-time curation worth doing.** After the first sync, hand your agent this prompt — it builds the cheapest retrieval tier (and is the step that turns a *search tool* into a *knowledge base*):
 
 ```
-Read _index/HANDOFF.md. Using ./ctx search and the extracted caches under
-_index/_state/extracted/, write _index/00_MASTER_INDEX.md: a 5-8K-token
-overview of this corpus — key facts, per-domain snapshot tables, and a file
-map. Cite source paths. Then write topical NN_*.md deep-dives for the 3-5
-largest domains. Never load all caches at once; work folder by folder.
+Read .docdex/HANDOFF.md. Using docdex search and docdex extract, write
+.docdex/00_MASTER_INDEX.md: a 5-8K-token overview of this corpus — key facts,
+per-domain snapshot tables, and a file map. Cite source paths. Then write
+topical NN_*.md deep-dives for the 3-5 largest domains. Never load everything
+at once; work folder by folder.
 ```
 
-**Vision/OCR with a multimodal agent.** `docdex vision create` queues scanned PDFs, images, and chart-only slides into a manifest; your agent processes them in batches, writes notes to `_index/vision_notes/`, and `docdex sync` makes them searchable. Image content becomes retrievable text exactly once.
+**Vision/OCR with a multimodal agent.** `docdex vision create` queues scanned PDFs, images, and chart-only slides into a manifest; your agent processes them in batches, writes notes to `.docdex/vision_notes/`, and `docdex sync` makes them searchable. Image content becomes retrievable text exactly once.
 
 **Automation-safe.** All output is plain text and exit codes are stable (`status` exits 1 when stale), so docdex drops into hooks, cron, and CI — e.g. a session-start hook that warns when the index is out of date.
 
@@ -161,7 +161,7 @@ A practical orientation — including the question everyone asks: *does the AI m
 
 ### Uninstalling it
 
-- **Per folder, first:** run `docdex purge --yes` *inside that folder* — it removes everything docdex created (the `_index/` state) and prints exactly what it will delete. **Your source documents are never touched.** It deliberately leaves the scaffolded `CLAUDE.md`/`AGENTS.md`; delete those by hand if you want them gone.
+- **Per folder, first:** run `docdex purge --yes` *inside that folder* — it removes the hidden `.docdex/` home **and** that project's external state cache, printing exactly what it will delete. **Your source documents are never touched.** It deliberately leaves the scaffolded `CLAUDE.md`/`AGENTS.md`; delete those by hand if you want them gone.
 - **The tool itself:** `pipx uninstall docdex` (or `pip uninstall docdex`).
 - **Order matters:** purge each project *before* uninstalling the tool, since `purge` is itself a docdex command.
 
@@ -169,7 +169,7 @@ A practical orientation — including the question everyone asks: *does the AI m
 
 ```bash
 cd ~/path/to/your/documents
-docdex init          # scaffolds .docdex.json, _index/, ./ctx, CLAUDE.md, AGENTS.md
+docdex init          # creates the hidden .docdex/ home + CLAUDE.md, AGENTS.md
 docdex sync          # walks the tree, extracts text, builds all indexes
 docdex status        # freshness + cache coverage at a glance
 
@@ -178,13 +178,14 @@ docdex semantic "rough description of it"   # fuzzy retrieval
 docdex doctor --e2e                          # full integrity self-test
 ```
 
-`init` also installs a `./ctx` wrapper in the project root, so `./ctx sync`, `./ctx search "..."` work for anyone (and any LLM) without knowing about docdex. The wrapper lives at the project root: call it as `./ctx` from there, or just use `docdex` from any subdirectory (it walks up to find the project). The wrapper resolves its own location, so a path like `../ctx` works from a subfolder too.
+By default `init` does **not** create a wrapper script — use the global `docdex` command from anywhere in the project (it walks up to find the project root). If you want a no-PATH entry point for collaborators or hooks, `docdex init --wrapper ctx` writes a `./ctx` shim at the root that forwards to `docdex` and resolves its own location (so `../ctx` works from a subfolder too).
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `docdex init` | Initialize a project. `--index NAME` to rename the index folder, `--no-agent-docs` / `--no-wrapper` to skip extras. |
+| `docdex init` | Initialize a project (creates the hidden `.docdex/` home). `--wrapper NAME` also writes a wrapper script (none by default); `--no-agent-docs` skips CLAUDE.md/AGENTS.md. |
+| `docdex migrate` | Upgrade a legacy (v1) project to the current layout. `--dry-run` previews the plan and changes nothing. |
 | `docdex sync` | Incremental reindex: cloud prefetch → inventory + text caches → context dumps → semantic index → vision queue. Flags to skip stages: `--no-prefetch`, `--no-dumps`, `--no-embed`, `--no-vision`; plus `--dry-run`, `--backfill`, `--no-hash`. |
 | `docdex context "task"` | Build a token-budgeted evidence packet (coverage header, cited answers, conflicts, gaps). `--budget N`, `--folder X`, `--from-file form.md`, `--explain`, `--check-freshness`. |
 | `docdex status` | Freshness check (exit 0 fresh, 1 stale/gaps). Distinguishes real cache gaps from scanned files with no text. |
@@ -205,24 +206,34 @@ Every command accepts `--root PATH`; without it, docdex walks up from the curren
 ## What it creates (and nothing else)
 
 ```
-your-project/
-├── .docdex.json            ← project marker + config
-├── ctx                     ← optional wrapper script
-├── CLAUDE.md, AGENTS.md    ← optional LLM operating instructions
-└── _index/
-    ├── HANDOFF.md           ← operating manual for humans/LLMs
-    ├── 00_MASTER_INDEX.md   ← stub for your curated overview
-    ├── Update/              ← inbox: drop new files here (indexed)
-    ├── vision_notes/        ← OCR/caption notes (indexed)
-    └── _state/              ← all derived data (safe to delete & rebuild)
-        ├── inventory.tsv             path / size / mtime / sha1 / ext / folder
-        ├── inventory_history.tsv     soft-delete log
-        ├── extract_status.tsv        per-file extraction outcome
-        ├── extracted/                per-file text caches
-        ├── context_dumps/            per-folder aggregates
-        ├── semantic_index.jsonl      embedding index
-        └── vision_tasks/             OCR queue manifest + image assets
+your-project/                ← your documents (untouched)
+├── .docdex/                 ← the one hidden docdex home (in the project)
+│   ├── config.json           ← project marker + config
+│   ├── secrets.json          ← optional PDF passwords (added on demand)
+│   ├── HANDOFF.md            ← operating manual for humans/LLMs
+│   ├── 00_MASTER_INDEX.md    ← stub for your curated overview
+│   ├── Update/               ← inbox: drop new files here (indexed)
+│   └── vision_notes/         ← OCR/caption notes (indexed)
+├── CLAUDE.md, AGENTS.md     ← LLM operating instructions (optional)
+└── (a ./<wrapper> shim only if you ask for one with --wrapper)
+
+~/.cache/docdex/<project>-<id>/    ← per-machine state, OUTSIDE the project
+└── _state/                  ← all derived data (rebuildable; never synced)
+    ├── inventory.tsv             path / size / mtime / sha1 / ext / folder
+    ├── inventory_history.tsv     soft-delete log
+    ├── extract_status.tsv        per-file extraction outcome
+    ├── extracted/                per-file text caches
+    ├── context_dumps/            per-folder aggregates
+    ├── semantic_index.jsonl      embedding index
+    └── vision_tasks/             OCR queue manifest + image assets
 ```
+
+The big, rebuildable state lives **outside** the project in a per-machine cache
+(`~/.cache/docdex/<project>-<id>/` by default; override with `DOCDEX_CACHE_DIR`
+or `XDG_CACHE_HOME`). That keeps a cloud-synced folder clean, and lets two
+machines syncing the same folder each keep their own index instead of corrupting
+one shared database through the cloud. The cache is disposable — delete it and
+the next `sync` rebuilds it.
 
 Source documents are **never moved, renamed, or modified** — important when the folder lives in OneDrive/iCloud/Dropbox, where moves break shared links. Deletions in your corpus are soft-deleted from the inventory with full history.
 
@@ -256,21 +267,21 @@ Use the **same** model for indexing and querying (mixing two gives nonsense), an
 
 ## Vision / OCR workflow
 
-Text extraction can't see scanned PDFs, images, or chart-only slides. `docdex vision create` builds a queue (`_state/vision_tasks/manifest.tsv`) of these sources, with embedded PPTX images exported as files an LLM can open. Process the queue with any multimodal model, write notes to `_index/vision_notes/` in the documented format, run `docdex sync` — the notes live inside the indexed tree, so they become searchable immediately. `docdex vision status` tracks progress; completed sources drop off the next queue.
+Text extraction can't see scanned PDFs, images, or chart-only slides. `docdex vision create` builds a queue (in the external state cache) of these sources, with embedded PPTX images exported as files an LLM can open. Process the queue with any multimodal model, write notes to `.docdex/vision_notes/` in the documented format, run `docdex sync` — the notes live inside the indexed tree, so they become searchable immediately. `docdex vision status` tracks progress; completed sources drop off the next queue.
 
 ## Day-to-day updating
 
-Drop new files anywhere (or into `_index/Update/` if you haven't decided where they belong), edit or delete files in place, then `docdex sync`. That's the whole workflow. `docdex status` tells you (and warns your LLM) when the index is stale.
+Drop new files anywhere (or into `.docdex/Update/` if you haven't decided where they belong), edit or delete files in place, then `docdex sync`. That's the whole workflow. `docdex status` tells you (and warns your LLM) when the index is stale.
 
 ## Configuration
 
-`.docdex.json` in the project root:
+`.docdex/config.json` inside the hidden home:
 
 ```json
 {
   "docdex_schema": 1,
-  "index_dir": "_index",
-  "wrapper": "ctx",
+  "index_dir": ".docdex",
+  "wrapper": "",
   "skip_dirs": ["Archive", "Raw Exports"]
 }
 ```
@@ -280,7 +291,7 @@ Drop new files anywhere (or into `_index/Update/` if you haven't decided where t
 ## Performance notes & honest limits
 
 - Comfortable for corpora up to roughly **10,000 files** end-to-end (the FTS5 `search` engine itself stays fast well past that — see the indexing-time table under [What to keep in mind](#what-to-keep-in-mind-install--index--use--uninstall)). The first full extraction is the only slow run; warm re-syncs are incremental.
-- Files ≥ 200 MB are inventoried but not hashed (no rename detection for them). A supported file larger than **`max_extract_mb` (default 50 MB)** is recorded as `skipped` rather than extracted, so one giant log/export can't balloon the index. Raise `max_extract_mb` in `.docdex.json` (or `0` to disable the cap), or pass `docdex sync --allow-large-text`, to index it anyway.
+- Files ≥ 200 MB are inventoried but not hashed (no rename detection for them). A supported file larger than **`max_extract_mb` (default 50 MB)** is recorded as `skipped` rather than extracted, so one giant log/export can't balloon the index. Raise `max_extract_mb` in `.docdex/config.json` (or `0` to disable the cap), or pass `docdex sync --allow-large-text`, to index it anyway.
 - Keyword `search` runs on the SQLite **FTS5/BM25** index, so its latency is effectively **flat as the corpus grows** (~36 ms median even at 50k files in the v0.2 audit). Only the no-FTS5 fallback scans caches linearly.
 - The `index.db` is rebuilt from your **source** files (via their `.txt` caches). If you ever hand-edit a cache directly, delete `index.db` and re-sync so the edit is picked up.
 - `docdex context` is the exception today: it does a full freshness walk per call, so on very large corpora it's slower than raw `search` (a known v0.3 fix — see the [roadmap](ROADMAP.md)). Run `docdex status` once per session and keep budgets sensible.
@@ -294,7 +305,7 @@ Drop new files anywhere (or into `_index/Update/` if you haven't decided where t
 ## Uninstall
 
 ```bash
-docdex purge --yes      # per project: removes marker, index dir, wrapper
+docdex purge --yes      # per project: removes .docdex/ home + external cache
 pipx uninstall docdex   # the tool itself
 ```
 

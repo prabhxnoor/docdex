@@ -29,7 +29,7 @@ def test_purge_never_deletes_outside_project(tmp_path):
 
     project = run_init(proj, quiet=True)
     # Forge a hostile marker post-init and confirm load refuses it outright.
-    (proj / ".docdex.json").write_text(
+    project.config_path.write_text(
         json.dumps({"index_dir": "../sibling"}), encoding="utf-8")
     with pytest.raises(ConfigError):
         Project.load(proj)

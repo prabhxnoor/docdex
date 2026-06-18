@@ -109,15 +109,20 @@ def extract_xlsx(path: str) -> str:
 
 
 def read_secrets(root) -> dict:
-    """Load the optional, user-controlled password map from
-    `<root>/.docdex.secrets.json`. Missing or corrupt → empty dict (never raises).
-    It is a hidden dotfile, so the walker never indexes it; it is never committed
-    to the docdex repo and its values are never logged."""
-    try:
-        data = json.loads((Path(root) / SECRETS_FILENAME).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    """Load the optional, user-controlled PDF-password map. Checks the v2 home
+    location `<root>/.docdex/secrets.json` first, then the legacy
+    `<root>/.docdex.secrets.json`. Missing or corrupt → empty dict (never
+    raises). It lives inside the hidden home (or is a root dotfile), so the
+    walker never indexes it; it is never committed to the docdex repo and its
+    values are never logged."""
+    root = Path(root)
+    for candidate in (root / ".docdex" / "secrets.json", root / SECRETS_FILENAME):
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        return data if isinstance(data, dict) else {}
+    return {}
 
 
 def candidate_passwords(rel_path: str, secrets: dict) -> list:

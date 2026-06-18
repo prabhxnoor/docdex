@@ -40,8 +40,8 @@ def test_cache_names_capped_for_long_paths(project):
 def test_top_folder_promotions(project):
     assert project.top_folder_for("Reports/a.md") == "Reports"
     assert project.top_folder_for("rootfile.md") == "_root"
-    assert project.top_folder_for("_index/Update/x.md") == "Update"
-    assert project.top_folder_for("_index/vision_notes/x.md") == "vision_notes"
+    assert project.top_folder_for(".docdex/Update/x.md") == "Update"
+    assert project.top_folder_for(".docdex/vision_notes/x.md") == "vision_notes"
 
 
 def test_walker_includes_and_skips(project):
@@ -52,16 +52,16 @@ def test_walker_includes_and_skips(project):
     assert "Reports/Q1 report.md" in got
     assert "Notes/Deep/Nested/deep file.md" in got
     assert "_indexes/sibling.md" in got  # sibling of index dir must be indexed
-    assert "_index/Update/dropped.md" in got
-    assert "_index/vision_notes/note.md" in got
+    assert ".docdex/Update/dropped.md" in got
+    assert ".docdex/vision_notes/note.md" in got
     assert "unsupported.bin" in got  # inventoried even if not extractable
 
     assert not any(r.startswith("node_modules/") for r in got)
-    assert not any(r.startswith("_index/_state") for r in got)
-    assert "_index/HANDOFF.md" not in got  # index internals are not corpus
+    assert not any(r.startswith(".docdex/_state") for r in got)
+    assert ".docdex/HANDOFF.md" not in got  # home internals are not corpus
+    assert ".docdex/config.json" not in got  # the marker is never indexed
     assert ".hiddenfile.md" not in got
     assert "~$lock.docx" not in got
-    assert ".docdex.json" not in got
 
 
 def test_walker_skips_custom_dirs(corpus):

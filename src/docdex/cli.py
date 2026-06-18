@@ -7,7 +7,7 @@ from pathlib import Path
 
 from docdex import __version__
 from docdex.config import (
-    DEFAULT_INDEX_DIR, DEFAULT_WRAPPER, DocdexError, NotAProject, Project,
+    DEFAULT_INDEX_DIR, DocdexError, NotAProject, Project,
 )
 
 
@@ -37,6 +37,10 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 1
     s = compute_status(project)
     print(f"docdex status — {project.root}")
+    if project.legacy:
+        print("  layout         : legacy (v1) — run `docdex migrate` to upgrade")
+    else:
+        print(f"  state cache    : {project.cache_dir}")
     print(f"  inventory rows : {s['inventory_rows']}")
     print(f"  source files   : {s['source_files']}")
     print(f"  state          : {'STALE' if s['stale'] else 'fresh'}")
@@ -295,8 +299,13 @@ def cmd_info(args: argparse.Namespace) -> int:
     project = _project(args)
     print(f"docdex {__version__}")
     print(f"  root       : {project.root}")
-    print(f"  index dir  : {project.index_dir_name}/")
-    print(f"  state dir  : {project.rel_to_root(project.state_dir)}/")
+    print(f"  home       : {project.index_dir_name}/  (in project)")
+    if project.legacy:
+        print(f"  state dir  : {project.rel_to_root(project.state_dir)}/  "
+              "(in project; legacy v1 — run `docdex migrate`)")
+    else:
+        print(f"  cache dir  : {project.cache_dir}  (per-machine, external)")
+        print(f"  state dir  : {project.state_dir}")
     print(f"  wrapper    : {project.wrapper_name or '(none)'}")
     extra = sorted(set(project.config.get('skip_dirs', [])))
     print(f"  skip dirs  : {', '.join(extra) if extra else '(built-ins only)'}")
@@ -306,6 +315,12 @@ def cmd_info(args: argparse.Namespace) -> int:
 def cmd_purge(args: argparse.Namespace) -> int:
     from docdex.scaffold import run_purge
     return run_purge(_project(args), yes=args.yes, state_only=args.state_only)
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    from docdex.migrate import migrate_project
+    migrate_project(_project(args).root, dry_run=args.dry_run)
+    return 0
 
 
 # --------------------------------------------------------------------- main
@@ -320,10 +335,12 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("init", help="initialize a docdex project here")
     p.add_argument("--index", default=DEFAULT_INDEX_DIR,
-                   help=f"index folder name (default: {DEFAULT_INDEX_DIR})")
-    p.add_argument("--wrapper", default=DEFAULT_WRAPPER,
-                   help=f"wrapper script name (default: {DEFAULT_WRAPPER})")
-    p.add_argument("--no-wrapper", action="store_true", help="skip the ./ctx wrapper")
+                   help=f"in-project home folder name (default: {DEFAULT_INDEX_DIR})")
+    p.add_argument("--wrapper", default=None,
+                   help="also create a ./NAME wrapper script "
+                        "(default: none — use the global `docdex` command)")
+    p.add_argument("--no-wrapper", action="store_true",
+                   help="(default) do not create a wrapper script")
     p.add_argument("--no-agent-docs", action="store_true",
                    help="skip CLAUDE.md / AGENTS.md templates")
     p.set_defaults(func=cmd_init)
@@ -409,6 +426,12 @@ def main(argv=None) -> int:
     p.add_argument("--state-only", action="store_true",
                    help="only clear _state/ (rebuildable); keep curated files and notes")
     p.set_defaults(func=cmd_purge)
+
+    p = sub.add_parser("migrate",
+                       help="upgrade a legacy (v1) project to the v2 layout")
+    p.add_argument("--dry-run", action="store_true",
+                   help="show the migration plan; change nothing")
+    p.set_defaults(func=cmd_migrate)
 
     args = parser.parse_args(argv)
     try:

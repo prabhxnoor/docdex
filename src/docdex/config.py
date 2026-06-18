@@ -1,25 +1,37 @@
 """Project discovery, configuration, and on-disk layout.
 
-A docdex project is any directory containing a `.docdex.json` marker. All
-derived data lives under `<root>/<index_dir>/_state/`; the only user-facing
-content inside the index dir is the curated markdown files, the `Update/`
-inbox, and `vision_notes/`.
+A v2 docdex project keeps one hidden in-project home, `<root>/.docdex/`,
+holding the config marker (`config.json`), the PDF-password `secrets.json`,
+the `Update/` inbox, `vision_notes/`, and curated markdown. All big,
+rebuildable state (extracted caches, the SQLite index, the semantic index)
+lives OUTSIDE the project in a per-machine cache (see `cache_base`), so two
+machines syncing the same folder never share — or corrupt — one database.
+
+A legacy v1 project (a `.docdex.json` marker at the root and an in-project
+`_index/_state/`) still loads and keeps using its in-project state until it is
+migrated.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
-MARKER_NAME = ".docdex.json"
-DEFAULT_INDEX_DIR = "_index"
+LEGACY_MARKER_NAME = ".docdex.json"      # v1: marker at the project root
+MARKER_NAME = LEGACY_MARKER_NAME         # back-compat alias for the v1 marker
+DEFAULT_INDEX_DIR = ".docdex"            # v2: the single hidden in-project home
 DEFAULT_WRAPPER = "ctx"
+CONFIG_NAME = "config.json"              # v2: marker/config inside the home
+SECRETS_NAME = "secrets.json"            # v2: PDF passwords inside the home
+LEGACY_SECRETS_NAME = ".docdex.secrets.json"   # v1: at the project root
 STATE_DIR = "_state"
 UPDATE_DIR = "Update"
 NOTES_DIR = "vision_notes"
+META_NAME = "meta.json"                  # external cache: records its project root
 
 # Directory names skipped at any depth, in addition to per-project skip_dirs.
 BUILTIN_SKIP_DIRS = {
@@ -50,6 +62,53 @@ def _truncate_utf8(text: str, max_bytes: int) -> str:
     if len(raw) <= max_bytes:
         return text
     return raw[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def cache_base() -> Path:
+    """Per-machine base dir for all docdex caches (rebuildable state).
+
+    Deliberately OUTSIDE any project, so two machines syncing the same folder
+    never share — and never corrupt — one index database. Resolution order:
+    ``$DOCDEX_CACHE_DIR`` (explicit override), then ``$XDG_CACHE_HOME/docdex``,
+    then ``~/.cache/docdex``.
+    """
+    env = os.environ.get("DOCDEX_CACHE_DIR")
+    if env:
+        return Path(env).expanduser()
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        return Path(xdg).expanduser() / "docdex"
+    return Path.home() / ".cache" / "docdex"
+
+
+def project_cache_id(root: Path) -> str:
+    """A stable, filesystem-safe id for a project's external cache dir.
+
+    A readable slug (the folder name, sanitized) plus a sha256 digest of the
+    resolved absolute path. The digest makes the mapping injective: two roots
+    whose names sanitize identically (``A B`` vs ``A_B``) still get distinct
+    ids, so they can never share a cache dir.
+    """
+    resolved = str(root.resolve())
+    digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:12]
+    slug = re.sub(r"[^A-Za-z0-9._-]", "_", root.name)[:40] or "project"
+    return f"{slug}-{digest}"
+
+
+def is_within(path: Path, base: Path) -> bool:
+    """True iff ``path`` resolves to ``base`` or somewhere inside it.
+
+    Resolves symlinks and ``..`` before comparing, so neither can steer a
+    write or a delete outside ``base``. This is the single confinement check
+    behind both the in-project home (base = project root) and the external
+    cache (base = the docdex cache base).
+    """
+    try:
+        p = path.resolve()
+        b = base.resolve()
+    except OSError:
+        return False
+    return p == b or b in p.parents
 
 
 class DocdexError(Exception):
@@ -94,9 +153,12 @@ def validate_index_dir(name: str) -> str:
 
 
 class Project:
-    def __init__(self, root: Path, config: dict):
+    def __init__(self, root: Path, config: dict, legacy: bool = False):
         self.root = root.resolve()
         self.config = config
+        # legacy (v1): marker at the root, state in-project under the index dir.
+        # New (v2): marker inside the hidden home, state in the external cache.
+        self.legacy: bool = bool(legacy)
         self.index_dir_name: str = validate_index_dir(
             config.get("index_dir", DEFAULT_INDEX_DIR))
         self.wrapper_name: str = config.get("wrapper", DEFAULT_WRAPPER)
@@ -134,6 +196,24 @@ class Project:
                     "project root; refusing to operate")
         return None
 
+    def state_confinement_error(self) -> Optional[str]:
+        """Why the external cache dir is unsafe to operate through, or None.
+
+        The v2 state lives under the cache base; refuse to write — or, in
+        `purge`, delete — if the per-project cache dir is a symlink or resolves
+        outside the base, so a tampered cache can never steer an operation
+        elsewhere. The external analogue of `index_confinement_error`.
+        """
+        base = cache_base()
+        cdir = self.cache_dir
+        if cdir.is_symlink():
+            return (f"cache dir {cdir} is a symlink; refusing to operate "
+                    "through it (it could point outside the cache base)")
+        if cdir.exists() and not is_within(cdir, base):
+            return (f"cache dir {cdir} resolves outside the cache base {base}; "
+                    "refusing to operate")
+        return None
+
     @property
     def max_extract_bytes(self) -> int:
         """Per-file extraction cap in bytes (0 = no cap)."""
@@ -145,8 +225,31 @@ class Project:
 
     # ---------------------------------------------------------------- layout
     @property
+    def config_path(self) -> Path:
+        """v2 marker/config — lives inside the hidden home."""
+        return self.index_dir / CONFIG_NAME
+
+    @property
+    def legacy_marker_path(self) -> Path:
+        """v1 marker — at the project root."""
+        return self.root / LEGACY_MARKER_NAME
+
+    @property
     def marker_path(self) -> Path:
-        return self.root / MARKER_NAME
+        """The active marker file for this project's layout."""
+        return self.legacy_marker_path if self.legacy else self.config_path
+
+    @property
+    def secrets_path(self) -> Path:
+        """PDF-password map: inside the home (v2), or at the root (legacy)."""
+        if self.legacy:
+            return self.root / LEGACY_SECRETS_NAME
+        return self.index_dir / SECRETS_NAME
+
+    @property
+    def cache_dir(self) -> Path:
+        """Per-machine external cache dir for this project's rebuildable state."""
+        return cache_base() / project_cache_id(self.root)
 
     @property
     def index_dir(self) -> Path:
@@ -162,7 +265,12 @@ class Project:
 
     @property
     def state_dir(self) -> Path:
-        return self.index_dir / STATE_DIR
+        # v1 keeps state in-project (under the index dir) until migrated; v2
+        # stores it in the per-machine cache, OUTSIDE the project, so two
+        # machines syncing the same folder never share one database.
+        if self.legacy:
+            return self.index_dir / STATE_DIR
+        return self.cache_dir / STATE_DIR
 
     @property
     def extracted_dir(self) -> Path:
@@ -270,6 +378,7 @@ class Project:
     # ------------------------------------------------------------ marker I/O
     def save(self) -> None:
         self.config["index_dir"] = self.index_dir_name
+        self.marker_path.parent.mkdir(parents=True, exist_ok=True)
         self.marker_path.write_text(
             json.dumps(self.config, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -287,47 +396,69 @@ class Project:
             "wrapper": wrapper,
             "skip_dirs": sorted(skip_dirs or []),
         }
-        return cls(root, config)
+        return cls(root, config, legacy=False)
 
     @classmethod
     def load(cls, root: Path) -> "Project":
-        marker = root / MARKER_NAME
-        if not marker.is_file():
-            raise NotAProject(f"no {MARKER_NAME} in {root}")
+        root = root.resolve()
+        v2 = root / DEFAULT_INDEX_DIR / CONFIG_NAME
+        v1 = root / LEGACY_MARKER_NAME
+        if v2.is_file():
+            marker, legacy = v2, False
+        elif v1.is_file():
+            marker, legacy = v1, True
+        else:
+            raise NotAProject(
+                f"no docdex project at {root} (looked for "
+                f"{DEFAULT_INDEX_DIR}/{CONFIG_NAME} and {LEGACY_MARKER_NAME})")
         try:
             config = json.loads(marker.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             raise ConfigError(
-                f"{MARKER_NAME} is corrupt and could not be read ({e}). "
+                f"{marker.name} is corrupt and could not be read ({e}). "
                 "Fix or recreate it with `docdex init`.")
         if not isinstance(config, dict):
-            raise ConfigError(f"{MARKER_NAME} must contain a JSON object")
-        return cls(root, config)
+            raise ConfigError(f"{marker.name} must contain a JSON object")
+        return cls(root, config, legacy=legacy)
 
     @classmethod
     def discover(cls, start: Optional[Path] = None) -> "Project":
         """Walk upward from `start` (default: cwd) to find the project root."""
         cur = (start or Path.cwd()).resolve()
         for candidate in [cur, *cur.parents]:
-            if (candidate / MARKER_NAME).is_file():
+            if (candidate / DEFAULT_INDEX_DIR / CONFIG_NAME).is_file() \
+                    or (candidate / LEGACY_MARKER_NAME).is_file():
                 return cls.load(candidate)
         raise NotAProject(
-            f"no {MARKER_NAME} found at or above {cur}. "
+            f"no docdex project found at or above {cur} (looked for "
+            f"{DEFAULT_INDEX_DIR}/{CONFIG_NAME} and {LEGACY_MARKER_NAME}). "
             "Run `docdex init` in the project root, or pass --root."
         )
 
 
 def ensure_state_dirs(project: Project) -> None:
-    # Boundary guard (defense in depth): even though the name passed validation,
-    # refuse to write if the index dir is a symlink or otherwise resolves outside
-    # the project root. Shared with `purge` via index_confinement_error so the
-    # write path and the delete path can never disagree about what is in-bounds.
+    # Boundary guards (defense in depth): even though names passed validation,
+    # refuse to write if the in-project home or the external cache is a symlink
+    # or resolves outside its base. Shared with `purge` so the write path and
+    # the delete path can never disagree about what is in-bounds.
     err = project.index_confinement_error()
     if err:
         raise ConfigError(err)
-    for d in (
-        project.index_dir, project.update_dir, project.notes_dir,
-        project.state_dir, project.extracted_dir, project.dumps_dir,
-        project.vision_dir,
-    ):
+    if not project.legacy:
+        serr = project.state_confinement_error()
+        if serr:
+            raise ConfigError(serr)
+    for d in (project.index_dir, project.update_dir, project.notes_dir):
         d.mkdir(parents=True, exist_ok=True)
+    for d in (project.state_dir, project.extracted_dir, project.dumps_dir,
+              project.vision_dir):
+        d.mkdir(parents=True, exist_ok=True)
+    if not project.legacy:
+        meta = project.cache_dir / META_NAME
+        if not meta.exists():
+            from docdex import __version__
+            meta.write_text(json.dumps({
+                "root": str(project.root),
+                "created_with": __version__,
+                "created_at": utc_now_iso(),
+            }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
