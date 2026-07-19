@@ -82,3 +82,30 @@ def test_stale_schema_forces_rebuild(stem_project):
     index_db.build(stem_project, quiet=True)
     hits = index_db.search(stem_project, "governing")
     assert any("contract.txt" in h["rel"] for h in hits)
+
+
+from docdex.search import run_search, score_text, stemmed, tokenize
+
+
+def test_stemmed_collides_variants():
+    assert stemmed("the deal was governed") >= {stem("governing"), stem("deals")}
+
+
+def test_score_text_matches_stem_variant():
+    q = "governing"
+    text = "the agreement is governed by law"
+    assert score_text("contract.txt", text, q, tokenize(q)) > 0
+
+
+def test_fallback_search_finds_inflected_variant(tmp_path):
+    # run_search is the no-FTS5 path: it reads caches directly, no index_db build.
+    from docdex.scaffold import run_init
+    from docdex.sync import run_sync
+    root = tmp_path / "fb"
+    root.mkdir()
+    (root / "contract.txt").write_text(
+        "This agreement is governed by the laws of Delaware.\n", encoding="utf-8")
+    project = run_init(root, quiet=True)
+    run_sync(project, quiet=True)
+    hits = run_search(project, "governing")
+    assert any("contract.txt" in rel for _score, rel, _cache, _snip in hits)

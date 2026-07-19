@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import List, Optional, Tuple
 
 from docdex.config import Project
 from docdex.inventory import read_inventory
+from docdex.stemming import stem
 
 
 def tokenize(query: str) -> List[str]:
@@ -21,6 +23,13 @@ def tokenize(query: str) -> List[str]:
             if len(t) >= 2]
 
 
+def stemmed(text: str) -> set:
+    """Porter-stemmed token set of `text` — the stem-aware companion to
+    tokenize(), for match-existence and recall. Never use for positions: a stem
+    is often a prefix and would not locate the literal word."""
+    return {stem(t) for t in tokenize(text)}
+
+
 def snippet(text: str, query: str, terms: List[str], width: int = 260) -> str:
     lower = text.lower()
     q = query.lower().strip()
@@ -34,28 +43,29 @@ def snippet(text: str, query: str, terms: List[str], width: int = 260) -> str:
 
 
 def score_text(path: str, text: str, query: str, terms: List[str]) -> int:
-    """Coverage-weighted keyword score with term-frequency saturation.
-
-    Each term's contribution is capped (BM25-style) so a document that just
-    repeats a common word can't out-rank one that genuinely contains all the
-    query terms including the rare/answer-bearing one.
+    """Coverage-weighted keyword score with term-frequency saturation, matching
+    on Porter stems so morphological variants (governing/governed) count together.
+    The literal-phrase bonus stays on raw text; only term matching is stemmed.
     """
     lower = text.lower()
-    path_lower = path.lower()
+    text_stems = Counter(stem(t) for t in tokenize(text))
+    path_stems = Counter(stem(t) for t in tokenize(path))
+    query_stems = {stem(t) for t in terms}
     score = 0
     matched = 0
     if query.lower() in lower:
         score += 20 * min(3, lower.count(query.lower()))
-    for t in terms:
-        weight = 3 if len(t) >= 5 else 1
-        tf = lower.count(t)
-        if tf + path_lower.count(t):
+    for qs in query_stems:
+        weight = 3 if len(qs) >= 5 else 1
+        tf = text_stems.get(qs, 0)
+        pf = path_stems.get(qs, 0)
+        if tf + pf:
             matched += 1
-        score += weight * min(tf, 3)          # saturate term frequency
-        score += 5 * min(path_lower.count(t), 2)
+        score += weight * min(tf, 3)
+        score += 5 * min(pf, 2)
     if matched == 0:
         return 0
-    coverage = (matched / max(1, len(set(terms)))) ** 2
+    coverage = (matched / max(1, len(query_stems))) ** 2
     return int(score * coverage + 20 * matched)
 
 
