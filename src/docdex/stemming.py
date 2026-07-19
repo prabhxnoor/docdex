@@ -175,6 +175,10 @@ def stem(token: str) -> str:
     punctuation, or any non-ASCII letter) is returned lowercased-but-unstemmed,
     so IDs (`gstr3b`), amounts, dates, and non-English text (`échéance`,
     Devanagari) stay literal and exact.
+
+    This is single-pass canonical Porter: deterministic (same input -> same
+    stem) but NOT idempotent (`stem(stem(x))` may differ from `stem(x)`), so
+    always apply it to raw tokens — never to already-stemmed output.
     """
     t = token.lower()
     if not (t.isascii() and t.isalpha()):

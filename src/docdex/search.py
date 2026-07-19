@@ -23,7 +23,7 @@ def tokenize(query: str) -> List[str]:
             if len(t) >= 2]
 
 
-def stemmed(text: str) -> set:
+def stemmed(text: str) -> set[str]:
     """Porter-stemmed token set of `text` — the stem-aware companion to
     tokenize(), for match-existence and recall. Never use for positions: a stem
     is often a prefix and would not locate the literal word."""

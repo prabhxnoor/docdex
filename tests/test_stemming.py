@@ -12,9 +12,14 @@ def test_inflections_collide_to_one_stem():
     assert stem("close") == stem("closed")
 
 
-def test_stem_is_idempotent():
-    for w in ("governing", "organizations", "closed", "happiness"):
-        assert stem(stem(w)) == stem(w)
+def test_stem_is_deterministic():
+    # Single-pass canonical Porter: deterministic (same input -> same stem), but
+    # NOT idempotent, so we assert determinism, not stem(stem(x)) == stem(x).
+    for w in ("governing", "organizations", "closed", "happiness",
+              "organisation", "provisional"):
+        assert stem(w) == stem(w)
+    # Document the non-idempotency explicitly so no future author assumes it:
+    assert stem("organisation") != stem(stem("organisation"))
 
 
 def test_stem_lowercases_plain_words():

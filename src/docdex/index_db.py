@@ -9,7 +9,7 @@ and callers fall back to the pure-Python scorer.
 Tables:
   files(rel PK, sha1, mtime_iso, ext, top_folder, tokens)
   chunks(chunk_id PK, rel, chunk_index, start_offset, end_offset, tokens, text)
-  chunks_fts  -- FTS5 external-content mirror of chunks.text
+  chunks_fts  -- FTS5 external-content mirror of chunks.text (porter tokenizer → stemming)
   meta(key, value)
 """
 from __future__ import annotations
@@ -124,6 +124,9 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
         if stored_ver is not None and stored_ver != SCHEMA_VERSION:
             conn.execute("DROP TABLE IF EXISTS chunks_fts")
             force = True
+            if not quiet:
+                print(f"Lexical index: schema {stored_ver}->{SCHEMA_VERSION}; "
+                      "rebuilding once from caches")
 
         has_fts = fts5_available(conn)
         _init_schema(conn, has_fts)
