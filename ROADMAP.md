@@ -6,7 +6,10 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-06-18 (shipped v0.4.1 — hidden `.docdex/` home + external per-machine state cache + `docdex migrate`; added the "lean by default / leave-no-bloat" hygiene discipline to the North star + M3, and self-cleaning OCR scratch to M7, after an external OCR run left ~11 GB of scratch behind)._
+> _Last updated: 2026-07-19 (v0.5.0 in progress — shipped stemming (M1 piece 1):
+> recall-favoring Porter with `~approx` provenance; folds in the binary-file
+> extraction fix. Deferred stem-aware field-value extraction to the alias/reranker
+> work.)_
 
 ## North star
 
@@ -211,11 +214,18 @@ field-local extraction first." (`CONTEXT_EFFICIENCY_REVIEW.md` §5.)*
 
 **Phase 4 — Meaning-aware search + deeper conflict (→ v0.5.0). ← next.**  *(Was
 Phase 3; moved one release back, deliberately gated behind Phase 3.)*
-- ⬜ **Stemming / lemmatisation** first (`close`/`closed`, `governing`/`governed`).
+- ✅ **Stemming / lemmatisation** (`close`/`closed`, `governing`/`governed`) —
+  FTS5 porter tokenizer + a vendored Python Porter as the authoritative match
+  check; recall-favoring, with `~approx` provenance tags so the agent can verify.
 - ⬜ **Field-alias registry** ("legal name" → "Vendor"), deterministic, visible in
   `--explain`, never used to fabricate a value.
 - ⬜ **Utility reranker** — prefer label-local values, explicit label-value rows,
   and source diversity over raw term frequency.
+- ⬜ **Stem-aware form field-value extraction** *(deferred from the stemming
+  piece)* — make `_label_window` / field-value matching stem-aware (position-safe
+  so a stem never lands mid-word), so a "Governing law" field pulls a value from
+  a "governed by …" clause. Fold into the alias / reranker work, which reworks
+  that code.
 - ⬜ **Optional embeddings / RRF** via `DOCDEX_EMBED_CMD` (local-only) for pure
   paraphrase and folder discovery — exact IDs, amounts, dates, and missing-evidence
   honesty stay lexical/structured.
@@ -250,7 +260,7 @@ false-conflict cases, not reduce them.
 
 - ⬜ **Field-alias / synonym registry** — a small, user-extensible map so
   `Legal name → {Vendor, Supplier, Party, legal entity}`. Deterministic.
-- ⬜ **Stemming + light lemmatisation** so `governing/governed/governs` collide.
+- ✅ **Stemming + light lemmatisation** so `governing/governed/governs` collide.
 - ⬜ **Optional reranking** of the top-N candidates (pluggable
   `DOCDEX_RERANK_CMD`, off by default → stays deterministic unless you opt in).
 - ⬜ **Hybrid lexical + vector fusion** (Reciprocal Rank Fusion) when

@@ -14,6 +14,22 @@ Next: **v0.5.0** — meaning-aware search (aliases, stemming, reranking) so "leg
 name" finds "Vendor", plus recency/authority weighting on the conflict layer. See
 [ROADMAP.md](ROADMAP.md).
 
+### Added
+
+- **Search now matches word variants, not just exact words (stemming).** A task
+  or search for `governing` also finds `governed` and `governs`; `deal` finds
+  `deals`; `close` finds `closed`. This raises how much relevant evidence a
+  packet recovers at the same token budget. To keep recall high without becoming
+  confidently wrong, evidence that matched only through a word stem (not the
+  literal term) is tagged **`~approx`**, `context --explain` shows the stems
+  used, and the agent scaffolding tells the agent to confirm the literal word
+  before asserting a fact. *In plain terms:* docdex used to miss a fact written
+  with a different word ending; now it finds it, and flags the match as
+  approximate so the agent can double-check. Exact IDs, amounts, and dates are
+  always matched literally and are never altered. The lexical index rebuilds
+  itself once on the next `sync` (no action needed). First of five v0.5.0
+  "meaning-aware search" pieces (see [ROADMAP.md](ROADMAP.md)). 194 tests (18 new).
+
 ### Fixed
 
 - **Binary files are no longer indexed as garbage (and no longer hang a sync).**
@@ -33,7 +49,7 @@ name" finds "Vendor", plus recency/authority weighting on the conflict layer. Se
   now stripped (tabs/newlines and all Unicode are preserved), so a genuine
   document with a few leaked control bytes stays clean in the index rather than
   contaminating it. Heavily non-ASCII text (Devanagari, accented Latin, currency
-  symbols) is explicitly *not* mistaken for binary. 176 tests (9 new).
+  symbols) is explicitly *not* mistaken for binary. 9 new tests.
 
 ## [0.4.1] — 2026-06-18 — "One tidy home, state out of the cloud"
 
