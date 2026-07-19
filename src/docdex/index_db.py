@@ -23,7 +23,7 @@ from docdex.config import Project
 from docdex.inventory import read_inventory
 from docdex.search import tokenize
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"   # v2: FTS5 porter tokenizer (stemming). v1 auto-rebuilds.
 
 
 def connect(project: Project) -> sqlite3.Connection:
@@ -95,9 +95,12 @@ def _init_schema(conn: sqlite3.Connection, has_fts: bool) -> None:
         """
     )
     if has_fts:
+        # `porter` stems both the indexed text and MATCH terms, so "governing"
+        # finds "governed" (recall). unicode61 keeps the existing folding.
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5("
-            "text, content='chunks', content_rowid='chunk_id')")
+            "text, content='chunks', content_rowid='chunk_id', "
+            "tokenize='porter unicode61')")
     conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('schema', ?)",
                  (SCHEMA_VERSION,))
     conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('fts', ?)",
@@ -108,6 +111,20 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
     inventory = read_inventory(project.inventory_path)
     conn = _open_for_build(project, quiet=quiet)
     try:
+        # A schema/tokenizer upgrade (e.g. v1 unicode61 -> v2 porter) can't take
+        # effect via CREATE ... IF NOT EXISTS on an existing DB. Detect a version
+        # change, drop the FTS mirror, and force a full reindex so the new
+        # tokenizer applies. Rebuilt from the .txt caches (the source of truth).
+        try:
+            stored = conn.execute(
+                "SELECT value FROM meta WHERE key='schema'").fetchone()
+            stored_ver = stored[0] if stored else None
+        except sqlite3.Error:
+            stored_ver = None
+        if stored_ver is not None and stored_ver != SCHEMA_VERSION:
+            conn.execute("DROP TABLE IF EXISTS chunks_fts")
+            force = True
+
         has_fts = fts5_available(conn)
         _init_schema(conn, has_fts)
 
