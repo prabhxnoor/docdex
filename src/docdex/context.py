@@ -18,7 +18,8 @@ from docdex import index_db
 from docdex import tokens as tok
 from docdex.config import DocdexError, Project
 from docdex.inventory import read_inventory
-from docdex.search import run_search, snippet, tokenize
+from docdex.search import run_search, snippet, stemmed, tokenize
+from docdex.stemming import stem
 
 # Lines that look like they carry a concrete value are the best "likely answer"
 # candidates. Conservative on purpose — the agent confirms; we only surface.
@@ -93,17 +94,19 @@ def _candidates(project: Project, query: str, folder: Optional[str],
         cands = [{"rel": rel, "chunk": 0, "text": snip, "score": float(score)}
                  for score, rel, _cache, snip in hits]
     content = set(_content_terms(query))
+    content_stems = {stem(t) for t in content}
 
     def keep(c: dict) -> bool:
         if c["rel"] in skip:
             return False
-        # Match *existence* is decided by content-term overlap, never by the BM25
-        # display score: a real hit whose score rounds to 0 (a term present in
-        # every doc) must not be dropped as "missing" (DDX-030). The score still
-        # drives ranking below; it just isn't a truth filter here.
+        # Match *existence* is decided by content-term overlap on Porter stems,
+        # never by the BM25 display score: a real hit whose score rounds to 0 (a
+        # term present in every doc) must not be dropped as "missing" (DDX-030),
+        # and a stem-only hit (governing↔governed) must survive too. The score
+        # still drives ranking below; it just isn't a truth filter here.
         if not content:
             return c["score"] >= MIN_EVIDENCE_SCORE
-        return bool(content & set(tokenize(c["text"])))
+        return bool(content_stems & stemmed(c["text"]))
 
     return [c for c in cands if keep(c)]
 
@@ -222,6 +225,18 @@ def _field_answer(text: str, label_terms: set, foreign_terms: set):
 
 def _content_terms(task: str) -> List[str]:
     return [t for t in tokenize(task) if len(t) >= 4 and t not in STOPWORDS]
+
+
+def _approx_match(text: str, content: set) -> bool:
+    """True when a query content-term matched `text` only through its stem, not
+    literally (governing↔governed) — i.e. the hit is approximate. Exact means
+    every content term that stem-matches is also present as a literal token."""
+    toks = set(tokenize(text))
+    tok_stems = {stem(t) for t in toks}
+    for t in content:
+        if stem(t) in tok_stems and t not in toks:
+            return True
+    return False
 
 
 def _pick_field_hit(hits: List[dict], label: str, extra_terms: set) -> Optional[dict]:
@@ -425,15 +440,17 @@ def build_packet(project: Project, task: str, budget: int = 3000,
                 break
             seen.add(key)
             per_source[cand["rel"]] = per_source.get(cand["rel"], 0) + 1
-            evidence.append((cand["rel"], cand["chunk"], excerpt, cand["score"]))
+            approx = _approx_match(cand["text"], terms)
+            evidence.append((cand["rel"], cand["chunk"], excerpt,
+                             cand["score"], approx))
             used += cost
 
     # ---- Free-text answers (value lines) + their conflict candidates ----
     answers = []
     if not form_fields:
-        for rel, chunk, excerpt, _score in evidence:
+        for rel, chunk, excerpt, _score, _approx in evidence:
             for line in _value_lines(excerpt, terms):
-                answers.append((line, f"{rel} ·{chunk}"))
+                answers.append((line, f"{rel} ·{chunk}", _approx_match(line, terms)))
                 key = tuple(sorted(t for t in terms if t in line.lower()))
                 conflict_items.append((key, _value_near(line, terms), rel, line))
         answers = answers[:8]
@@ -489,8 +506,9 @@ def build_packet(project: Project, task: str, budget: int = 3000,
             answer_block.append(
                 f"- {r['label']}: {r['line']}  [{r['hit']['rel']} ·{r['hit']['chunk']}]")
     else:
-        for line, source in answers:
-            answer_block.append(f"- {line}  [{source}]")
+        for line, source, approx in answers:
+            atag = "  ~approx" if approx else ""
+            answer_block.append(f"- {line}  [{source}]{atag}")
     if answer_block:
         out += ["## Answers", *answer_block, ""]
 
@@ -536,11 +554,15 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         out.append("")
 
     out.append("## Evidence")
+    if any(e[4] for e in evidence):
+        out.append("> `~approx` = matched by word stem, not the literal term — "
+                   "confirm the literal word before relying on it.")
     if evidence:
-        for i, (rel, chunk, excerpt, score) in enumerate(evidence, 1):
+        for i, (rel, chunk, excerpt, score, approx) in enumerate(evidence, 1):
             mt = mtimes.get(rel, "")
             mtag = f"  ({mt[:10]})" if mt else ""
-            out.append(f"[E{i}] {rel} ·{chunk}{mtag}  (score {score})")
+            atag = "  ~approx" if approx else ""
+            out.append(f"[E{i}] {rel} ·{chunk}{mtag}  (score {score}){atag}")
             out.append(f'  "{excerpt}"')
     else:
         reason = " (budget too small)" if budget_eff <= 0 or evidence_truncated else ""
@@ -558,6 +580,11 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     if explain:
         out.append("## Explain")
         out.append(f"- query terms: {', '.join(sorted(terms)) or '(none)'}")
+        stem_groups: "OrderedDict[str, list]" = OrderedDict()
+        for t in sorted(terms):
+            stem_groups.setdefault(stem(t), []).append(t)
+        out.append("- stems: " + ("; ".join(
+            f"{s} ← {', '.join(ts)}" for s, ts in stem_groups.items()) or "(none)"))
         out.append(f"- candidate chunks retrieved: {len(pool)}")
         out.append(f"- evidence packed: {len(evidence)} (≤{MAX_PER_SOURCE}/source); "
                    f"fields {len(packed_found)} found / {len(packed_weak)} weak / "

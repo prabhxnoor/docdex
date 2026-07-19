@@ -109,3 +109,38 @@ def test_fallback_search_finds_inflected_variant(tmp_path):
     run_sync(project, quiet=True)
     hits = run_search(project, "governing")
     assert any("contract.txt" in rel for _score, rel, _cache, _snip in hits)
+
+
+from docdex import context as ctxmod
+
+
+def test_context_surfaces_inflected_evidence(stem_project):
+    packet = ctxmod.build_packet(stem_project, "governing agreement", budget=1500)
+    assert "contract.txt" in packet
+
+
+def test_approx_evidence_is_tagged(stem_project):
+    # "governing" only matches "governed" via stem -> approximate, tagged + legend.
+    packet = ctxmod.build_packet(stem_project, "governing agreement", budget=1500)
+    assert "~approx" in packet
+    assert "matched by word stem" in packet
+
+
+def test_exact_evidence_is_not_tagged_approx(stem_project):
+    # The document literally contains "closed" -> exact, no ~approx legend.
+    packet = ctxmod.build_packet(stem_project, "closed deals", budget=1500)
+    assert "matched by word stem" not in packet
+
+
+def test_explain_lists_query_stems(stem_project):
+    packet = ctxmod.build_packet(stem_project, "governing agreement",
+                                 budget=1500, explain=True)
+    assert "stems:" in packet
+    assert "govern" in packet
+
+
+def test_literal_amount_survives_stemming(stem_project):
+    # An exact amount must appear byte-identical in the packet (never merged/altered).
+    packet = ctxmod.build_packet(stem_project, "invoice total amount due",
+                                 budget=1500)
+    assert "42,000,000" in packet
