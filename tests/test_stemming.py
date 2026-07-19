@@ -152,3 +152,14 @@ def test_stem_only_hit_not_listed_missing(stem_project):
     packet = ctxmod.build_packet(stem_project, "governing agreement", budget=1500)
     assert "~approx" in packet                 # it did surface via stem
     assert "no index hits for" not in packet   # ...so it is not "missing"
+
+
+def test_scaffold_explains_approx_tag(tmp_path):
+    from docdex.scaffold import run_init
+    root = tmp_path / "scaf"
+    root.mkdir()
+    run_init(root, quiet=True)
+    claude = (root / "CLAUDE.md").read_text(encoding="utf-8")
+    agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+    assert "~approx" in claude
+    assert "~approx" in agents

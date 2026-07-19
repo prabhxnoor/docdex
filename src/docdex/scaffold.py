@@ -114,6 +114,9 @@ Then read `{index_dir}/HANDOFF.md`.
 5. Freshness lives in docdex's state cache; run `{cmd} status` to check it
    (don't guess from filenames). The state cache is per-machine and outside
    this folder, so run `{cmd} sync` on each computer after pulling new files.
+6. Evidence tagged `~approx` matched by word stem (e.g. "governing" ↔
+   "governed"), not the literal term — confirm the literal word before
+   asserting a fact. IDs, dates, and amounts are always matched literally.
 """
 
 AGENTS_MD_TEMPLATE = """# {project_name} — agent instructions
@@ -135,6 +138,10 @@ Quick reference:
 
 Prefer `context` over reading files; load curated summaries before raw files;
 ask targeted questions instead of guessing; never move the user's source files.
+
+Evidence tagged `~approx` was matched by word stem (e.g. "governing" ↔
+"governed"), not the literal term — confirm the literal word before asserting a
+fact. IDs, dates, and amounts are matched literally.
 """
 
 
