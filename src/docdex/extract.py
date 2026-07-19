@@ -33,6 +33,41 @@ TEXTUTIL_EXTENSIONS = {".doc", ".rtf"}  # macOS only
 
 UNSUPPORTED_PREFIX = "[unsupported"
 
+# How many leading bytes to inspect when deciding whether a file is binary.
+_SNIFF_BYTES = 8192
+# C0 control bytes that are legitimate in real text: tab, LF, CR, form-feed.
+_TEXT_CTRL = {0x09, 0x0a, 0x0d, 0x0c}
+# Control chars stripped from extracted text: every C0 char that is not normal
+# whitespace, plus DEL. Built once; used by sanitize_text via str.translate.
+_STRIP_CTRL = {c: None for c in range(0x20) if c not in _TEXT_CTRL}
+_STRIP_CTRL[0x7f] = None
+
+
+def looks_binary(sample: bytes) -> bool:
+    """Heuristic: does this byte sample look like binary (non-text) content?
+
+    A NUL byte in the sniff window is the strong signal — it appears almost
+    immediately in images, archives, executables, and random blobs, and never
+    in real UTF-8 text. Failing that, a high proportion of C0 control bytes that
+    never occur in text marks it binary. Bytes >= 0x80 are deliberately NOT
+    counted, so heavily non-ASCII UTF-8 (Devanagari, accented Latin, currency
+    symbols) is correctly treated as text rather than mistaken for binary.
+    """
+    if not sample:
+        return False
+    if b"\x00" in sample:
+        return True
+    ctrl = sum(1 for b in sample if b < 0x20 and b not in _TEXT_CTRL)
+    return ctrl / len(sample) > 0.30
+
+
+def sanitize_text(s: str) -> str:
+    """Strip NUL and stray control characters from extracted text while keeping
+    tabs/newlines and all printable/Unicode content. Some PDF/office extractions
+    leak the odd control char into otherwise-real text; removing them keeps the
+    cache and index clean without discarding the document. Idempotent."""
+    return s.translate(_STRIP_CTRL)
+
 
 def textutil_available() -> bool:
     return sys.platform == "darwin"
@@ -144,8 +179,19 @@ def extract_pdf(path: str, passwords=()) -> str:
 
 
 def extract_plain(path: str) -> str:
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        return f.read()
+    """Read a whitelisted text file, but refuse binary content.
+
+    A file can carry a text extension (.log/.csv/.json/.xml/.txt/.html) yet hold
+    binary data — a log rotated into a blob, a renamed image, a database dump.
+    Reading that with errors="replace" produced megabytes of replacement-char
+    garbage that got chunked and embedded; at size/scale it also hung sync. We
+    sniff the first block and report binary content as unsupported instead."""
+    with open(path, "rb") as f:
+        head = f.read(_SNIFF_BYTES)
+        if looks_binary(head):
+            return f"{UNSUPPORTED_PREFIX} binary content ({Path(path).suffix.lower()})]"
+        rest = f.read()
+    return (head + rest).decode("utf-8", errors="replace")
 
 
 def extract_with_textutil(path: str) -> str:

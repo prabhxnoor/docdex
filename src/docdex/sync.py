@@ -159,7 +159,9 @@ class _Extractor:
         if isinstance(text, str) and text.startswith(ex.UNSUPPORTED_PREFIX):
             self._record(rel, "unsupported", detail=text[:120])
             return
-        text = text or ""
+        # Strip NUL / stray control chars any extractor may have leaked, so the
+        # cache and both indexes stay clean text regardless of the source format.
+        text = ex.sanitize_text(text or "")
         dest.write_text(text, encoding="utf-8")
         if text.strip():
             self._record(rel, "ok", chars=len(text))

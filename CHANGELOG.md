@@ -14,6 +14,27 @@ Next: **v0.5.0** — meaning-aware search (aliases, stemming, reranking) so "leg
 name" finds "Vendor", plus recency/authority weighting on the conflict layer. See
 [ROADMAP.md](ROADMAP.md).
 
+### Fixed
+
+- **Binary files are no longer indexed as garbage (and no longer hang a sync).**
+  docdex decided what to extract purely by file extension, so a binary blob that
+  happened to carry a text extension — a rotated log, a renamed image, a database
+  dump named `.log`/`.csv`/`.json`/`.xml` — was read as text and turned into
+  megabytes of replacement-character noise that got chunked and embedded into both
+  indexes. Now the extractor sniffs the file's first bytes and reports binary
+  content as `unsupported` (detail: `binary content (.ext)`) instead of extracting
+  it. *In plain terms:* one 40 MB binary file used to produce ~24,000 junk chunks
+  and take ~20 s on its own; several such files stacked up and made `sync` look
+  hung. It now skips them in milliseconds and keeps the index clean. Unknown
+  extensions (`.bin`, images, archives) were already skipped; this closes the
+  text-extension-but-binary-content hole.
+- **Extracted text is sanitized before it is cached.** NUL and stray control
+  characters that some PDF/office extractions leak into otherwise-real text are
+  now stripped (tabs/newlines and all Unicode are preserved), so a genuine
+  document with a few leaked control bytes stays clean in the index rather than
+  contaminating it. Heavily non-ASCII text (Devanagari, accented Latin, currency
+  symbols) is explicitly *not* mistaken for binary. 176 tests (9 new).
+
 ## [0.4.1] — 2026-06-18 — "One tidy home, state out of the cloud"
 
 A storage-layout overhaul so a synced project folder stays clean and two
