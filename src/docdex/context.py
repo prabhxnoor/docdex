@@ -456,8 +456,11 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         answers = answers[:8]
     conflicts = _conflicts(conflict_items, mtimes)
 
-    pool_text = " ".join(c["text"] for c in pool).lower()
-    missing_terms = [t for t in terms if t not in pool_text]
+    # Stem-aware, matching keep()'s notion of a hit: a term that only matched via
+    # its stem (governing↔governed) surfaced as ~approx evidence, so it must not
+    # also be reported as missing — that would contradict the evidence just shown.
+    pool_stems = set().union(*(stemmed(c["text"]) for c in pool)) if pool else set()
+    missing_terms = [t for t in terms if stem(t) not in pool_stems]
 
     # A positive budget that the packed content already blew past must be flagged,
     # in free-text mode too — not just silently over (DDX-033).

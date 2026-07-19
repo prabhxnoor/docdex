@@ -144,3 +144,11 @@ def test_literal_amount_survives_stemming(stem_project):
     packet = ctxmod.build_packet(stem_project, "invoice total amount due",
                                  budget=1500)
     assert "42,000,000" in packet
+
+
+def test_stem_only_hit_not_listed_missing(stem_project):
+    # "governing" matches only via the stem of "governed"; it is surfaced as
+    # ~approx evidence, so it must NOT also be reported as an unmatched term.
+    packet = ctxmod.build_packet(stem_project, "governing agreement", budget=1500)
+    assert "~approx" in packet                 # it did surface via stem
+    assert "no index hits for" not in packet   # ...so it is not "missing"
