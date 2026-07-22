@@ -367,11 +367,11 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     else:
         terms = set(_content_terms(task))
     alias_groups = al.load_aliases(project)
-    # Provenance is tied to the SAME full-phrase trigger retrieval uses: only the
-    # synonym stems a *complete* query phrase pulled in count as an alias match,
-    # so a lone shared token (SLA owner vs service level↔SLA) is never tagged.
-    _alias_q = " ".join(form_fields) if form_fields else task
-    alias_extra = (al.expand_stems(_alias_q, alias_groups) - stemmed(_alias_q)) if alias_groups else set()
+    # Provenance (the ~approx synonym tag) is scoped to FREE-TEXT search only. In
+    # form mode the field-label synonym path is deferred, so alias_extra stays
+    # empty and the two _approx_match call sites below become no-ops (intended).
+    alias_extra = ((al.expand_stems(task, alias_groups) - stemmed(task))
+                   if (alias_groups and not form_fields) else set())
     inv_rows, state_err = _read_inv(project)
     mtimes = {rel: row.get("mtime_iso", "") for rel, row in inv_rows.items()}
     # Hide the form file and (only) *unchanged* scaffolds; an edited CLAUDE.md is
@@ -400,25 +400,12 @@ def build_packet(project: Project, task: str, budget: int = 3000,
                 continue
             # Extract this field's value label-locally, preferring the candidate
             # that yields a *clean* (single-field) value over a broad/dense line.
-            ans, ans_hit, via_alias = None, best, False
+            ans, ans_hit = None, best
             for h in [best] + [x for x in fhits if x is not best]:
                 cand = _field_answer(h["text"], label_terms, foreign)
                 if cand:
                     ans, ans_hit = cand, h
                     if cand[2]:                  # clean → take it
-                        break
-            # Alias fallback: if the field's own label yielded nothing, try each
-            # synonym label (a whole literal word present in the text). Additive —
-            # only runs when the literal label failed and an alias file matches.
-            if ans is None:
-                for variant in al.label_variants(label, alias_groups):
-                    for h in [best] + [x for x in fhits if x is not best]:
-                        cand = _field_answer(h["text"], variant, foreign - variant)
-                        if cand:
-                            ans, ans_hit, via_alias = cand, h, True
-                            if cand[2]:
-                                break
-                    if ans is not None and ans[2]:
                         break
             if ans is None:
                 # matched the label but no clean value — show the label-local
@@ -431,15 +418,12 @@ def build_packet(project: Project, task: str, budget: int = 3000,
             else:
                 _value, display, clean = ans
                 resolved.append({"label": label, "has_value": clean,
-                                 "line": display, "hit": ans_hit,
-                                 "approx": via_alias})
+                                 "line": display, "hit": ans_hit})
             pool.append(ans_hit)
             pinned.add((ans_hit["rel"], ans_hit["chunk"]))
-            conflict_variants = [label_terms] + al.label_variants(label, alias_groups)
             for h in fhits:                # conflicting values for THIS field only
-                for vt in conflict_variants:
-                    for clause, val in _field_values(h["text"], vt):
-                        conflict_items.append((label, val, h["rel"], clause))
+                for clause, val in _field_values(h["text"], label_terms):
+                    conflict_items.append((label, val, h["rel"], clause))
 
     missing_fields = [r["label"] for r in resolved if r["hit"] is None]
 
@@ -552,9 +536,8 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     answer_block = []
     if form_fields:
         for r in packed_found:
-            atag = "  ~approx" if r.get("approx") else ""
             answer_block.append(
-                f"- {r['label']}: {r['line']}  [{r['hit']['rel']} ·{r['hit']['chunk']}]{atag}")
+                f"- {r['label']}: {r['line']}  [{r['hit']['rel']} ·{r['hit']['chunk']}]")
     else:
         for line, source, approx in answers:
             atag = "  ~approx" if approx else ""
@@ -565,9 +548,8 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     if packed_weak:
         out.append("## Needs follow-up (weak)")
         for r in packed_weak:
-            atag = "  ~approx" if r.get("approx") else ""
             out.append(f"- {r['label']}: matched, no clear value — {r['line']}  "
-                       f"[{r['hit']['rel']} ·{r['hit']['chunk']}]{atag}")
+                       f"[{r['hit']['rel']} ·{r['hit']['chunk']}]")
         out.append("")
 
     if conflicts:
@@ -605,10 +587,13 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         out.append("")
 
     out.append("## Evidence")
-    if any(e[4] for e in evidence) or any(r.get("approx") for r in packed_found) \
-            or any(r.get("approx") for r in packed_weak):
-        out.append("> `~approx` = matched by word stem or a declared synonym, "
-                   "not the literal term — confirm before relying on it.")
+    if any(e[4] for e in evidence):
+        if alias_groups:
+            out.append("> `~approx` = matched by word stem or a declared synonym, "
+                       "not the literal term — confirm before relying on it.")
+        else:
+            out.append("> `~approx` = matched by word stem, not the literal term — "
+                       "confirm the literal word before relying on it.")
     if evidence:
         for i, (rel, chunk, excerpt, score, approx) in enumerate(evidence, 1):
             mt = mtimes.get(rel, "")
@@ -642,7 +627,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
             # by stem), consistent with retrieval — not any-token membership.
             shown = []
             for g in alias_groups:
-                present = [p for p in g if al._phrase_present(p, stemmed(_alias_q))]
+                present = [p for p in g if al._phrase_present(p, [stem(t) for t in tokenize(task)])]
                 if present:
                     shown.append(" / ".join(g))
             out.append("- aliases: " + ("; ".join(shown) if shown else "(none matched)"))

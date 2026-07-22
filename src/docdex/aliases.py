@@ -13,7 +13,7 @@ import logging
 from typing import List
 
 from docdex.config import Project
-from docdex.search import stemmed, tokenize
+from docdex.search import tokenize
 from docdex.stemming import stem
 
 log = logging.getLogger("docdex")
@@ -52,38 +52,23 @@ def load_aliases(project: Project) -> List[List[str]]:
     return groups
 
 
-def _phrase_stems(phrase: str) -> set:
-    return {stem(t) for t in tokenize(phrase)}
+def _phrase_present(phrase: str, text_stem_list: list) -> bool:
+    ps = [stem(t) for t in tokenize(phrase)]
+    if not ps:
+        return False
+    n = len(ps)
+    return any(text_stem_list[i:i + n] == ps for i in range(len(text_stem_list) - n + 1))
 
 
-def _phrase_present(phrase: str, text_stems: set) -> bool:
-    ps = _phrase_stems(phrase)
-    return bool(ps) and ps <= text_stems
-
-
-def expand_stems(text: str, groups: List[List[str]]) -> set:
-    """Extra stems contributed by aliases: for any group with a phrase present
-    (by stem) in `text`, add the stems of ALL the group's phrases. Used only to
-    widen retrieval/existence — never to read a value."""
-    tstems = stemmed(text)
-    extra: set = set()
+def expand_stems(text: str, groups):
+    """Extra stems contributed by aliases: for any group a phrase of which is
+    present as a CONTIGUOUS stemmed run in `text`, add the stems of ALL the
+    group's phrases. Used only to widen retrieval/existence — never to read a
+    value."""
+    stem_list = [stem(t) for t in tokenize(text)]
+    extra = set()
     for group in groups:
-        if any(_phrase_present(p, tstems) for p in group):
+        if any(_phrase_present(p, stem_list) for p in group):
             for p in group:
-                extra |= _phrase_stems(p)
+                extra |= {stem(t) for t in tokenize(p)}
     return extra
-
-
-def label_variants(label: str, groups: List[List[str]]) -> List[set]:
-    """Alternative *literal* label-token sets for a form field: for any group a
-    phrase of which matches the field label, the group's OTHER phrases become
-    alternative labels (their literal token sets), used to read a value after a
-    synonym label. Empty when no group matches."""
-    lbl_stems = {stem(t) for t in tokenize(label)}
-    variants: List[set] = []
-    for group in groups:
-        if any(_phrase_stems(p) == lbl_stems for p in group):
-            for p in group:
-                if _phrase_stems(p) != lbl_stems:
-                    variants.append(set(tokenize(p)))
-    return variants
