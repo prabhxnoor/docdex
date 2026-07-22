@@ -108,3 +108,24 @@ def test_explain_shows_alias_expansion(tmp_path):
         {"deal.txt": "The vendor is Acme.\n"})
     packet = ctxmod.build_packet(project, "legal name", budget=1500, explain=True)
     assert "aliases:" in packet
+
+
+def test_form_field_reads_value_after_synonym_label(tmp_path):
+    # Field is "Legal name"; the document only has a "Vendor:" label.
+    project = _synced_alias_project(
+        tmp_path, {"legal name": ["vendor"]},
+        {"form_src.txt": "Vendor: Acme Corporation Pvt Ltd\nGoverning law: Delaware\n"})
+    packet = ctxmod.build_packet(project, "fill the form", budget=2000,
+                                 form_fields=["Legal name"])
+    assert "Acme Corporation" in packet          # value read after the synonym label
+    assert "~approx" in packet                    # and honestly flagged approximate
+
+
+def test_form_field_own_label_still_literal_and_exact(tmp_path):
+    # When the literal label is present, the value is exact (no alias fallback).
+    project = _synced_alias_project(
+        tmp_path, {"legal name": ["vendor"]},
+        {"form_src.txt": "Legal name: Beta Industries\n"})
+    packet = ctxmod.build_packet(project, "fill the form", budget=2000,
+                                 form_fields=["Legal name"])
+    assert "Beta Industries" in packet

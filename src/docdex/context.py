@@ -401,12 +401,25 @@ def build_packet(project: Project, task: str, budget: int = 3000,
                 continue
             # Extract this field's value label-locally, preferring the candidate
             # that yields a *clean* (single-field) value over a broad/dense line.
-            ans, ans_hit = None, best
+            ans, ans_hit, via_alias = None, best, False
             for h in [best] + [x for x in fhits if x is not best]:
                 cand = _field_answer(h["text"], label_terms, foreign)
                 if cand:
                     ans, ans_hit = cand, h
                     if cand[2]:                  # clean → take it
+                        break
+            # Alias fallback: if the field's own label yielded nothing, try each
+            # synonym label (a whole literal word present in the text). Additive —
+            # only runs when the literal label failed and an alias file matches.
+            if ans is None:
+                for variant in al.label_variants(label, alias_groups):
+                    for h in [best] + [x for x in fhits if x is not best]:
+                        cand = _field_answer(h["text"], variant, foreign - variant)
+                        if cand:
+                            ans, ans_hit, via_alias = cand, h, True
+                            if cand[2]:
+                                break
+                    if ans is not None and ans[2]:
                         break
             if ans is None:
                 # matched the label but no clean value — show the label-local
@@ -419,7 +432,8 @@ def build_packet(project: Project, task: str, budget: int = 3000,
             else:
                 _value, display, clean = ans
                 resolved.append({"label": label, "has_value": clean,
-                                 "line": display, "hit": ans_hit})
+                                 "line": display, "hit": ans_hit,
+                                 "approx": via_alias})
             pool.append(ans_hit)
             pinned.add((ans_hit["rel"], ans_hit["chunk"]))
             for h in fhits:                # conflicting values for THIS field only
@@ -537,8 +551,9 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     answer_block = []
     if form_fields:
         for r in packed_found:
+            atag = "  ~approx" if r.get("approx") else ""
             answer_block.append(
-                f"- {r['label']}: {r['line']}  [{r['hit']['rel']} ·{r['hit']['chunk']}]")
+                f"- {r['label']}: {r['line']}  [{r['hit']['rel']} ·{r['hit']['chunk']}]{atag}")
     else:
         for line, source, approx in answers:
             atag = "  ~approx" if approx else ""
@@ -588,7 +603,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         out.append("")
 
     out.append("## Evidence")
-    if any(e[4] for e in evidence):
+    if any(e[4] for e in evidence) or any(r.get("approx") for r in packed_found):
         out.append("> `~approx` = matched by word stem, not the literal term — "
                    "confirm the literal word before relying on it.")
     if evidence:
