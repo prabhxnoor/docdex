@@ -149,6 +149,16 @@ def _make_executable(path: Path) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+STARTER_ALIASES = {
+    "legal name": ["vendor", "supplier", "counterparty", "legal entity"],
+    "governing law": ["jurisdiction", "governed by"],
+    "effective date": ["commencement date", "start date"],
+    "liability cap": ["limitation of liability", "maximum liability"],
+    "termination": ["cancellation", "expiry"],
+    "confidentiality": ["non-disclosure", "nda"],
+}
+
+
 def _write_if_missing(path: Path, text: str) -> bool:
     if path.exists():
         return False
@@ -205,6 +215,12 @@ def run_init(root: Path, index_dir: str = DEFAULT_INDEX_DIR,
         project.scaffold_fingerprint_path.write_text(
             json.dumps(fingerprints, indent=2, sort_keys=True) + "\n",
             encoding="utf-8")
+
+    # Seed a lean, editable synonym starter (user-owned; NOT fingerprinted, so an
+    # edited or deleted aliases.json is always respected). Powers free-text synonym
+    # matching in search/context; delete it to turn synonyms off.
+    _write_if_missing(project.aliases_path,
+                      json.dumps(STARTER_ALIASES, indent=2) + "\n")
 
     if wrapper:
         wrapper_path = root / wrapper

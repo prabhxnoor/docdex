@@ -29,6 +29,19 @@ name" finds "Vendor", plus recency/authority weighting on the conflict layer. Se
   always matched literally and are never altered. The lexical index rebuilds
   itself once on the next `sync` (no action needed). First of five v0.5.0
   "meaning-aware search" pieces (see [ROADMAP.md](ROADMAP.md)). 194 tests (18 new).
+- **Synonyms: find documents that use a different word for the same thing.** A
+  `search` or `context` task for `legal name` now also matches documents that say
+  `Vendor` or `Supplier`, via a user-owned `.docdex/aliases.json` that `init`
+  seeds with a small, editable starter of contract / due-diligence terms (trim or
+  extend it; delete it to turn synonyms off). Synonym matches are tagged
+  `~approx`, shown in `context --explain`, and **never invent a value** — they
+  only widen which documents are found. *In plain terms:* if one file calls it
+  "Legal name" and another calls it "Vendor", docdex can now connect them — but
+  only for the synonyms you approve, and it always flags a synonym-based match so
+  you can double-check. Auto-reading a form field's value from a synonym label,
+  and synonym-aware conflict detection, are a deliberately deferred follow-up (see
+  [ROADMAP.md](ROADMAP.md)) — the free-text half ships now. Second of five v0.5.0
+  "meaning-aware search" pieces.
 
 ### Fixed
 

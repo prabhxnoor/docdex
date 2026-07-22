@@ -113,3 +113,11 @@ def test_unrelated_token_not_tagged_approx(tmp_path):
     packet = ctxmod.build_packet(project, "service owner email", budget=2000)
     assert "alice@x.com" in packet        # the hit was retrieved and packed
     assert "~approx" not in packet        # but not falsely flagged as an alias hit
+
+
+def test_init_scaffolds_starter_alias_file(tmp_path):
+    from docdex.scaffold import run_init
+    project = run_init(tmp_path, quiet=True)
+    assert project.aliases_path.exists()
+    groups = al.load_aliases(project)
+    assert any("legal name" in g for g in groups)   # curated starter present

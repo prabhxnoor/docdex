@@ -6,10 +6,11 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-07-19 (v0.5.0 in progress — shipped stemming (M1 piece 1):
-> recall-favoring Porter with `~approx` provenance; folds in the binary-file
-> extraction fix. Deferred stem-aware field-value extraction to the alias/reranker
-> work.)_
+> _Last updated: 2026-07-22 (v0.5.0 in progress — shipped stemming (M1 piece 1)
+> and the field-alias registry (piece 2, free-text synonyms via
+> `.docdex/aliases.json`, `~approx`-tagged); folds in the binary-file fix.
+> Deferred to conflict v2: synonym-aware form field-value extraction + conflict
+> detection.)_
 
 ## North star
 
@@ -217,8 +218,15 @@ Phase 3; moved one release back, deliberately gated behind Phase 3.)*
 - ✅ **Stemming / lemmatisation** (`close`/`closed`, `governing`/`governed`) —
   FTS5 porter tokenizer + a vendored Python Porter as the authoritative match
   check; recall-favoring, with `~approx` provenance tags so the agent can verify.
-- ⬜ **Field-alias registry** ("legal name" → "Vendor"), deterministic, visible in
-  `--explain`, never used to fabricate a value.
+- ✅ **Field-alias registry** ("legal name" → "Vendor") — user-owned
+  `.docdex/aliases.json` (curated editable starter, off when deleted),
+  deterministic, contiguous-phrase, `~approx`-tagged, in `--explain`, never
+  fabricates. **Free-text search/context** (piece 2).
+- ⬜ **Synonym-aware form field-value extraction + conflict detection** *(deferred
+  from the alias piece → fold into conflict v2)* — read a field value after a
+  synonym label, and flag conflicts across synonym-labelled values. Deferred
+  because date/ID value extraction and conflict-keying need care to stay "never
+  confidently wrong."
 - ⬜ **Utility reranker** — prefer label-local values, explicit label-value rows,
   and source diversity over raw term frequency.
 - ⬜ **Stem-aware form field-value extraction** *(deferred from the stemming
@@ -258,8 +266,9 @@ the same token cost — but the round-3 audit was explicit that this must come
 value heuristics would widen the candidate pool and multiply the false-found and
 false-conflict cases, not reduce them.
 
-- ⬜ **Field-alias / synonym registry** — a small, user-extensible map so
+- ✅ **Field-alias / synonym registry** — a small, user-extensible map so
   `Legal name → {Vendor, Supplier, Party, legal entity}`. Deterministic.
+  Free-text search/context shipped; synonym-aware form-field extraction deferred to conflict v2.
 - ✅ **Stemming + light lemmatisation** so `governing/governed/governs` collide.
 - ⬜ **Optional reranking** of the top-N candidates (pluggable
   `DOCDEX_RERANK_CMD`, off by default → stays deterministic unless you opt in).
