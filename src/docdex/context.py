@@ -26,8 +26,8 @@ from docdex import aliases as al
 # candidates. Conservative on purpose — the agent confirms; we only surface.
 VALUE_RE = re.compile(
     r"([₹$€£]\s?\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
-    r"|(\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
     r"|(\b\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b)"
+    r"|(\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
     r"|(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d)"
     r"|([A-Z0-9]{6,}\d|[0-9]{2}[A-Z]{4,})"            # ID-ish tokens
     r"|([\w.+-]+@[\w-]+\.[\w.-]+)",                    # emails
@@ -194,10 +194,21 @@ def _amount(value: str) -> Optional[float]:
     return n
 
 
+# A date is not an amount. `_amount` reads a date's leading run of digits as a
+# number ('31/12/2026' → 31.0), so two dates that share a day (31/12 vs 31/01)
+# would collapse to one key and a real date conflict would be silently hidden —
+# the very gap the VALUE_RE date fix set out to close. Key dates by their own
+# normalized text so distinct dates stay distinct.
+_DATE_VALUE_RE = re.compile(r"\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b")
+
+
 def _value_key(value: str):
     """Comparison key for conflict grouping: equal amounts collapse to one key
-    (no false conflict between '₹4.20 cr' and '4.2 crore'); everything else
-    compares by normalized text."""
+    (no false conflict between '₹4.20 cr' and '4.2 crore'); a date keeps its own
+    text key (so '31/12/2026' vs '31/01/2027' don't both reduce to 31 and hide a
+    conflict); everything else compares by normalized text."""
+    if _DATE_VALUE_RE.match(value.strip()):
+        return ("date", re.sub(r"\s+", " ", value).strip().lower())
     n = _amount(value)
     if n is not None:
         return ("num", round(n, 2))
@@ -337,6 +348,17 @@ def _freshness(project: Project, check: bool) -> str:
         return "unknown"
 
 
+_AUTHORITY_POS = re.compile(r"(?i)\b(executed|signed|final|amended|effective)\b")
+_AUTHORITY_NEG = re.compile(r"(?i)\b(draft|wip|working|superseded|archive|old)\b")
+
+
+def _authority(source: str) -> int:
+    """Transparent, deterministic authority HINT from the source path — never a
+    resolver. +1 for an executed/signed/final-type name, -1 for a draft-type one,
+    else 0. Used only as a same-recency tiebreak and shown as a label."""
+    return (1 if _AUTHORITY_POS.search(source) else 0) - (1 if _AUTHORITY_NEG.search(source) else 0)
+
+
 def _conflicts(items, mtimes: dict):
     """Group (key, value, source, line) by key. Within a key, group values by a
     *normalized* key so equivalent amounts don't false-conflict (DDX-032); a key
@@ -356,7 +378,8 @@ def _conflicts(items, mtimes: dict):
         if len(by_norm) >= 2:
             reps = [max(group, key=lambda vsl: mtimes.get(vsl[1], ""))
                     for group in by_norm.values()]
-            reps.sort(key=lambda vsl: mtimes.get(vsl[1], ""), reverse=True)
+            reps.sort(key=lambda vsl: (mtimes.get(vsl[1], ""), _authority(vsl[1])),
+                      reverse=True)
             out.append((key, reps))
     return out
 
@@ -564,11 +587,17 @@ def build_packet(project: Project, task: str, budget: int = 3000,
 
     if conflicts:
         out.append("## Conflicts")
+        out.append("> newer / more-authoritative is not necessarily correct — verify.")
         for key, reps in conflicts:
             label = key if isinstance(key, str) else (", ".join(key) or "value")
-            newest_val, newest_src, _ = reps[0]
-            others = "; ".join(f"{v} in {src}" for v, src, _ in reps[1:])
-            out.append(f"- {label}: {newest_val} in {newest_src} (newest) vs {others}")
+            out.append(f"- {label}: {len(reps)} values disagree")
+            for i, (val, src, _line) in enumerate(reps):
+                mt = mtimes.get(src, "")
+                date = f" ({mt[:10]})" if mt else ""
+                auth = "  · authoritative" if _authority(src) > 0 else (
+                    "  · draft" if _authority(src) < 0 else "")
+                tag = "  ← newest" if i == 0 else ""
+                out.append(f"    - {val} — {src}{date}{auth}{tag}")
         out.append("")
 
     if missing_fields or missing_terms:

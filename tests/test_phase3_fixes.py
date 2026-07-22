@@ -164,11 +164,12 @@ def test_conflict_marks_genuinely_newest_source(tmp_path):
     index_db.build(project, quiet=True)
 
     packet = build_packet(project, "how many deals did we close", budget=3000)
-    conf = [l for l in packet.splitlines() if "(newest)" in l]
+    # conflict-v2 render: newest value is the first rep, tagged "← newest".
+    conf = [l for l in packet.splitlines() if "← newest" in l]
     assert conf, packet
     # value 40 must be attributed to its genuinely newest source q2.md.
-    assert "q2.md (newest)" in conf[0], conf
-    assert "40" in conf[0].split("(newest)")[0]
+    assert "q2.md" in conf[0], conf
+    assert "40" in conf[0]
 
 
 def test_equivalent_amounts_do_not_false_conflict(tmp_path):

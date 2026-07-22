@@ -82,9 +82,11 @@ def test_conflicting_sources_are_flagged_newer_first(tmp_path):
 
     packet = build_packet(project, "how many deals did we close", budget=2000)
     assert "## Conflicts" in packet
-    conf = [l for l in packet.splitlines() if "(newest)" in l][0]
-    assert "40" in conf.split("(newest)")[0]   # the newer value is marked newest
-    assert "30" in conf                         # the older value is still shown
+    # conflict-v2 render: the newer value is the first rep, tagged "← newest";
+    # the older value is on its own line but still surfaced (never dropped).
+    conf = [l for l in packet.splitlines() if "← newest" in l][0]
+    assert "40" in conf                         # the newer value is marked newest
+    assert "30" in packet                       # the older value is still shown
 
 
 # ---- DDX-019: freshness must be cheap by default -----------------------
