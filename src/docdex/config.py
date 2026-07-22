@@ -27,6 +27,7 @@ DEFAULT_INDEX_DIR = ".docdex"            # v2: the single hidden in-project home
 DEFAULT_WRAPPER = "ctx"
 CONFIG_NAME = "config.json"              # v2: marker/config inside the home
 SECRETS_NAME = "secrets.json"            # v2: PDF passwords inside the home
+ALIASES_NAME = "aliases.json"            # v2: user synonym map inside the home
 LEGACY_SECRETS_NAME = ".docdex.secrets.json"   # v1: at the project root
 STATE_DIR = "_state"
 UPDATE_DIR = "Update"
@@ -245,6 +246,11 @@ class Project:
         if self.legacy:
             return self.root / LEGACY_SECRETS_NAME
         return self.index_dir / SECRETS_NAME
+
+    @property
+    def aliases_path(self) -> Path:
+        """User-defined synonym map, inside the home."""
+        return self.index_dir / ALIASES_NAME
 
     @property
     def cache_dir(self) -> Path:
