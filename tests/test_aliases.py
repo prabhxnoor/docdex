@@ -57,3 +57,54 @@ def test_label_variants(tmp_path):
     groups = al.load_aliases(project)
     variants = al.label_variants("Legal name", groups)
     assert {"vendor"} in variants and {"supplier"} in variants
+
+
+from docdex import context as ctxmod
+from docdex import index_db
+
+
+def _synced_alias_project(tmp_path, mapping, files):
+    from docdex.scaffold import run_init
+    from docdex.sync import run_sync
+    root = tmp_path / "corpus"
+    root.mkdir()
+    for name, body in files.items():
+        (root / name).write_text(body, encoding="utf-8")
+    project = run_init(root, quiet=True)
+    project.aliases_path.write_text(json.dumps(mapping), encoding="utf-8")
+    run_sync(project, quiet=True)
+    index_db.build(project, quiet=True)
+    return project
+
+
+def test_alias_widens_retrieval(tmp_path):
+    project = _synced_alias_project(
+        tmp_path, {"legal name": ["vendor", "supplier"]},
+        {"deal.txt": "The vendor is Acme Corporation of Delaware.\n"})
+    packet = ctxmod.build_packet(project, "legal name", budget=1500)
+    assert "deal.txt" in packet          # found via the alias "vendor"
+
+
+def test_alias_hit_is_tagged_approx(tmp_path):
+    project = _synced_alias_project(
+        tmp_path, {"legal name": ["vendor"]},
+        {"deal.txt": "The vendor is Acme Corporation.\n"})
+    packet = ctxmod.build_packet(project, "legal name", budget=1500)
+    assert "~approx" in packet
+
+
+def test_no_alias_file_unchanged(tmp_path):
+    # Without the mapping, "legal name" does NOT find a doc that only says vendor.
+    project = _synced_alias_project(
+        tmp_path, {}, {"deal.txt": "The vendor is Acme Corporation.\n"})
+    project.aliases_path.unlink(missing_ok=True)
+    packet = ctxmod.build_packet(project, "legal name", budget=1500)
+    assert "deal.txt" not in packet
+
+
+def test_explain_shows_alias_expansion(tmp_path):
+    project = _synced_alias_project(
+        tmp_path, {"legal name": ["vendor", "supplier"]},
+        {"deal.txt": "The vendor is Acme.\n"})
+    packet = ctxmod.build_packet(project, "legal name", budget=1500, explain=True)
+    assert "aliases:" in packet

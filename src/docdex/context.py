@@ -20,6 +20,7 @@ from docdex.config import DocdexError, Project
 from docdex.inventory import read_inventory
 from docdex.search import run_search, snippet, stemmed, tokenize
 from docdex.stemming import stem
+from docdex import aliases as al
 
 # Lines that look like they carry a concrete value are the best "likely answer"
 # candidates. Conservative on purpose — the agent confirms; we only surface.
@@ -80,21 +81,38 @@ def _scaffold_excludes(project: Project, inv_sha: dict) -> set:
 
 
 def _candidates(project: Project, query: str, folder: Optional[str],
-                pool: int, exclude: Optional[set] = None) -> List[dict]:
+                pool: int, exclude: Optional[set] = None,
+                alias_groups: Optional[list] = None) -> List[dict]:
     """Unified candidate list from the best available engine, with docdex's own
     scaffold files, the form file itself, and near-zero (stopword-only) matches
     filtered out."""
     skip = exclude or set()
+    # Widen the retrieval query itself through aliases: for any group a phrase of
+    # which is present (by stem) in the query, add that group's phrases so the
+    # engine surfaces docs that name the thing only by a synonym (legal name →
+    # vendor). Gated on alias_groups, so with no alias file the query — and thus
+    # the whole candidate set and its scores — is byte-identical to before.
+    search_query = query
+    if alias_groups:
+        qstems = stemmed(query)
+        extra: List[str] = []
+        for group in alias_groups:
+            if any(stemmed(p) and stemmed(p) <= qstems for p in group):
+                extra += group
+        if extra:
+            search_query = query + " " + " ".join(extra)
     try:
-        rows = index_db.search(project, query, folder=folder, limit=pool)
+        rows = index_db.search(project, search_query, folder=folder, limit=pool)
         cands = [{"rel": r["rel"], "chunk": r["chunk_index"], "text": r["text"],
                   "score": r["score"]} for r in rows]
     except FileNotFoundError:
-        hits = run_search(project, query, folder=folder, limit=pool)
+        hits = run_search(project, search_query, folder=folder, limit=pool)
         cands = [{"rel": rel, "chunk": 0, "text": snip, "score": float(score)}
                  for score, rel, _cache, snip in hits]
     content = set(_content_terms(query))
     content_stems = {stem(t) for t in content}
+    if alias_groups:
+        content_stems |= al.expand_stems(query, alias_groups)
 
     def keep(c: dict) -> bool:
         if c["rel"] in skip:
@@ -227,15 +245,23 @@ def _content_terms(task: str) -> List[str]:
     return [t for t in tokenize(task) if len(t) >= 4 and t not in STOPWORDS]
 
 
-def _approx_match(text: str, content: set) -> bool:
-    """True when a query content-term matched `text` only through its stem, not
-    literally (governing↔governed) — i.e. the hit is approximate. Exact means
-    every content term that stem-matches is also present as a literal token."""
+def _stem_set(s: str) -> set:
+    return {stem(t) for t in tokenize(s)}
+
+
+def _approx_match(text: str, content: set, alias_groups: Optional[list] = None) -> bool:
+    """True when a query content-term matched `text` only approximately — through
+    its stem (governing↔governed) or through a declared alias (legal name↔vendor),
+    not as a literal token. Exact means the literal term is present."""
     toks = set(tokenize(text))
     tok_stems = {stem(t) for t in toks}
     for t in content:
-        if stem(t) in tok_stems and t not in toks:
+        if t not in toks and stem(t) in tok_stems:
             return True
+    if alias_groups:
+        for t in content:
+            if al.alias_only_hit(t, text, alias_groups):
+                return True
     return False
 
 
@@ -346,13 +372,15 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         terms = {t for label in form_fields for t in _content_terms(label)}
     else:
         terms = set(_content_terms(task))
+    alias_groups = al.load_aliases(project)
     inv_rows, state_err = _read_inv(project)
     mtimes = {rel: row.get("mtime_iso", "") for rel, row in inv_rows.items()}
     # Hide the form file and (only) *unchanged* scaffolds; an edited CLAUDE.md is
     # real evidence and must surface (DDX-036).
     skip = (exclude or set()) | _scaffold_excludes(
         project, {rel: row.get("sha1", "") for rel, row in inv_rows.items()})
-    pool = _candidates(project, task, folder, pool=40, exclude=skip)
+    pool = _candidates(project, task, folder, pool=40, exclude=skip,
+                       alias_groups=alias_groups)
 
     # ---- Resolve each form field (retrieval only; budget applied when packing) ----
     resolved: List[dict] = []          # {label, has_value, line, hit|None}
@@ -364,7 +392,8 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         for label in form_fields:
             label_terms = label_tokens[label]
             foreign = all_label_tokens - label_terms   # other fields' label tokens
-            fhits = _candidates(project, label, folder, pool=6, exclude=skip)
+            fhits = _candidates(project, label, folder, pool=6, exclude=skip,
+                                alias_groups=alias_groups)
             best = _pick_field_hit(fhits, label, label_terms)
             if not best:
                 resolved.append({"label": label, "has_value": False,
@@ -440,7 +469,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
                 break
             seen.add(key)
             per_source[cand["rel"]] = per_source.get(cand["rel"], 0) + 1
-            approx = _approx_match(cand["text"], terms)
+            approx = _approx_match(cand["text"], terms, alias_groups)
             evidence.append((cand["rel"], cand["chunk"], excerpt,
                              cand["score"], approx))
             used += cost
@@ -450,7 +479,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     if not form_fields:
         for rel, chunk, excerpt, _score, _approx in evidence:
             for line in _value_lines(excerpt, terms):
-                answers.append((line, f"{rel} ·{chunk}", _approx_match(line, terms)))
+                answers.append((line, f"{rel} ·{chunk}", _approx_match(line, terms, alias_groups)))
                 key = tuple(sorted(t for t in terms if t in line.lower()))
                 conflict_items.append((key, _value_near(line, terms), rel, line))
         answers = answers[:8]
@@ -460,6 +489,8 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     # its stem (governing↔governed) surfaced as ~approx evidence, so it must not
     # also be reported as missing — that would contradict the evidence just shown.
     pool_stems = set().union(*(stemmed(c["text"]) for c in pool)) if pool else set()
+    if alias_groups:
+        pool_stems |= al.expand_stems(" ".join(c["text"] for c in pool), alias_groups)
     missing_terms = [t for t in terms if stem(t) not in pool_stems]
 
     # A positive budget that the packed content already blew past must be flagged,
@@ -588,6 +619,14 @@ def build_packet(project: Project, task: str, budget: int = 3000,
             stem_groups.setdefault(stem(t), []).append(t)
         out.append("- stems: " + ("; ".join(
             f"{s} ← {', '.join(ts)}" for s, ts in stem_groups.items()) or "(none)"))
+        if alias_groups:
+            used = []
+            for t in sorted(terms):
+                for g in alias_groups:
+                    if any(stem(t) in {stem(x) for x in tokenize(p)} for p in g):
+                        used.append(f"{t} → {', '.join(x for x in g if _stem_set(x) != {stem(t)})}")
+                        break
+            out.append("- aliases: " + ("; ".join(used) if used else "(none matched)"))
         out.append(f"- candidate chunks retrieved: {len(pool)}")
         out.append(f"- evidence packed: {len(evidence)} (≤{MAX_PER_SOURCE}/source); "
                    f"fields {len(packed_found)} found / {len(packed_weak)} weak / "
