@@ -74,21 +74,6 @@ def expand_stems(text: str, groups: List[List[str]]) -> set:
     return extra
 
 
-def alias_only_hit(term: str, text: str, groups: List[List[str]]) -> bool:
-    """True when `term` is absent from `text` (literally and by stem) yet a
-    synonym group it belongs to has another phrase present — i.e. this term
-    matched only via an alias. Drives `~approx` provenance."""
-    tstems = stemmed(text)
-    tstem = stem(term)
-    if tstem in tstems:
-        return False
-    for group in groups:
-        in_group = any(tstem in _phrase_stems(p) for p in group)
-        if in_group and any(_phrase_present(p, tstems) for p in group):
-            return True
-    return False
-
-
 def label_variants(label: str, groups: List[List[str]]) -> List[set]:
     """Alternative *literal* label-token sets for a form field: for any group a
     phrase of which matches the field label, the group's OTHER phrases become

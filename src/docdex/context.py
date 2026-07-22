@@ -245,23 +245,17 @@ def _content_terms(task: str) -> List[str]:
     return [t for t in tokenize(task) if len(t) >= 4 and t not in STOPWORDS]
 
 
-def _stem_set(s: str) -> set:
-    return {stem(t) for t in tokenize(s)}
-
-
-def _approx_match(text: str, content: set, alias_groups: Optional[list] = None) -> bool:
+def _approx_match(text: str, content: set, alias_extra: Optional[set] = None) -> bool:
     """True when a query content-term matched `text` only approximately — through
-    its stem (governing↔governed) or through a declared alias (legal name↔vendor),
-    not as a literal token. Exact means the literal term is present."""
+    its stem (governing↔governed) or a query-triggered declared synonym
+    (legal name↔vendor), not as a literal token."""
     toks = set(tokenize(text))
     tok_stems = {stem(t) for t in toks}
     for t in content:
         if t not in toks and stem(t) in tok_stems:
             return True
-    if alias_groups:
-        for t in content:
-            if al.alias_only_hit(t, text, alias_groups):
-                return True
+    if alias_extra and (alias_extra & tok_stems):
+        return True
     return False
 
 
@@ -373,6 +367,11 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     else:
         terms = set(_content_terms(task))
     alias_groups = al.load_aliases(project)
+    # Provenance is tied to the SAME full-phrase trigger retrieval uses: only the
+    # synonym stems a *complete* query phrase pulled in count as an alias match,
+    # so a lone shared token (SLA owner vs service level↔SLA) is never tagged.
+    _alias_q = " ".join(form_fields) if form_fields else task
+    alias_extra = (al.expand_stems(_alias_q, alias_groups) - stemmed(_alias_q)) if alias_groups else set()
     inv_rows, state_err = _read_inv(project)
     mtimes = {rel: row.get("mtime_iso", "") for rel, row in inv_rows.items()}
     # Hide the form file and (only) *unchanged* scaffolds; an edited CLAUDE.md is
@@ -436,9 +435,11 @@ def build_packet(project: Project, task: str, budget: int = 3000,
                                  "approx": via_alias})
             pool.append(ans_hit)
             pinned.add((ans_hit["rel"], ans_hit["chunk"]))
+            conflict_variants = [label_terms] + al.label_variants(label, alias_groups)
             for h in fhits:                # conflicting values for THIS field only
-                for clause, val in _field_values(h["text"], label_terms):
-                    conflict_items.append((label, val, h["rel"], clause))
+                for vt in conflict_variants:
+                    for clause, val in _field_values(h["text"], vt):
+                        conflict_items.append((label, val, h["rel"], clause))
 
     missing_fields = [r["label"] for r in resolved if r["hit"] is None]
 
@@ -483,7 +484,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
                 break
             seen.add(key)
             per_source[cand["rel"]] = per_source.get(cand["rel"], 0) + 1
-            approx = _approx_match(cand["text"], terms, alias_groups)
+            approx = _approx_match(cand["text"], terms, alias_extra)
             evidence.append((cand["rel"], cand["chunk"], excerpt,
                              cand["score"], approx))
             used += cost
@@ -493,7 +494,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     if not form_fields:
         for rel, chunk, excerpt, _score, _approx in evidence:
             for line in _value_lines(excerpt, terms):
-                answers.append((line, f"{rel} ·{chunk}", _approx_match(line, terms, alias_groups)))
+                answers.append((line, f"{rel} ·{chunk}", _approx_match(line, terms, alias_extra)))
                 key = tuple(sorted(t for t in terms if t in line.lower()))
                 conflict_items.append((key, _value_near(line, terms), rel, line))
         answers = answers[:8]
@@ -564,8 +565,9 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     if packed_weak:
         out.append("## Needs follow-up (weak)")
         for r in packed_weak:
+            atag = "  ~approx" if r.get("approx") else ""
             out.append(f"- {r['label']}: matched, no clear value — {r['line']}  "
-                       f"[{r['hit']['rel']} ·{r['hit']['chunk']}]")
+                       f"[{r['hit']['rel']} ·{r['hit']['chunk']}]{atag}")
         out.append("")
 
     if conflicts:
@@ -603,9 +605,10 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         out.append("")
 
     out.append("## Evidence")
-    if any(e[4] for e in evidence) or any(r.get("approx") for r in packed_found):
-        out.append("> `~approx` = matched by word stem, not the literal term — "
-                   "confirm the literal word before relying on it.")
+    if any(e[4] for e in evidence) or any(r.get("approx") for r in packed_found) \
+            or any(r.get("approx") for r in packed_weak):
+        out.append("> `~approx` = matched by word stem or a declared synonym, "
+                   "not the literal term — confirm before relying on it.")
     if evidence:
         for i, (rel, chunk, excerpt, score, approx) in enumerate(evidence, 1):
             mt = mtimes.get(rel, "")
@@ -635,13 +638,14 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         out.append("- stems: " + ("; ".join(
             f"{s} ← {', '.join(ts)}" for s, ts in stem_groups.items()) or "(none)"))
         if alias_groups:
-            used = []
-            for t in sorted(terms):
-                for g in alias_groups:
-                    if any(stem(t) in {stem(x) for x in tokenize(p)} for p in g):
-                        used.append(f"{t} → {', '.join(x for x in g if _stem_set(x) != {stem(t)})}")
-                        break
-            out.append("- aliases: " + ("; ".join(used) if used else "(none matched)"))
+            # Reflect the groups the query actually TRIGGERED (full phrase present
+            # by stem), consistent with retrieval — not any-token membership.
+            shown = []
+            for g in alias_groups:
+                present = [p for p in g if al._phrase_present(p, stemmed(_alias_q))]
+                if present:
+                    shown.append(" / ".join(g))
+            out.append("- aliases: " + ("; ".join(shown) if shown else "(none matched)"))
         out.append(f"- candidate chunks retrieved: {len(pool)}")
         out.append(f"- evidence packed: {len(evidence)} (≤{MAX_PER_SOURCE}/source); "
                    f"fields {len(packed_found)} found / {len(packed_weak)} weak / "

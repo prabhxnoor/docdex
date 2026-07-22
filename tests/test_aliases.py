@@ -43,15 +43,6 @@ def test_expand_stems_is_symmetric(tmp_path):
     assert stem("supplier") in got and stem("legal") in got
 
 
-def test_alias_only_hit(tmp_path):
-    project = _project_with_aliases(tmp_path, {"legal name": ["vendor"]})
-    groups = al.load_aliases(project)
-    # "legal" is absent from the text, but its synonym "vendor" is present:
-    assert al.alias_only_hit("legal", "the vendor is Acme", groups)
-    # a term with no alias and not present -> not an alias hit:
-    assert not al.alias_only_hit("banana", "the vendor is Acme", groups)
-
-
 def test_label_variants(tmp_path):
     project = _project_with_aliases(tmp_path, {"legal name": ["vendor", "supplier"]})
     groups = al.load_aliases(project)
@@ -110,22 +101,77 @@ def test_explain_shows_alias_expansion(tmp_path):
     assert "aliases:" in packet
 
 
+def _section(packet: str, header: str) -> str:
+    """The body of a `## Header` section (up to the next `## `), for asserting a
+    value landed in the RIGHT place (Answers vs Conflicts), not just anywhere."""
+    lines = packet.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == header:
+            body = []
+            for nxt in lines[i + 1:]:
+                if nxt.startswith("## "):
+                    break
+                body.append(nxt)
+            return "\n".join(body)
+    return ""
+
+
+def _answer_line(packet: str, label: str) -> str:
+    for line in packet.splitlines():
+        if line.startswith(f"- {label}:"):
+            return line
+    return ""
+
+
 def test_form_field_reads_value_after_synonym_label(tmp_path):
-    # Field is "Legal name"; the document only has a "Vendor:" label.
+    # Field is "Effective date"; the doc only carries the synonym label.
     project = _synced_alias_project(
-        tmp_path, {"legal name": ["vendor"]},
-        {"form_src.txt": "Vendor: Acme Corporation Pvt Ltd\nGoverning law: Delaware\n"})
+        tmp_path, {"effective date": ["commencement date"]},
+        {"form_src.txt": "Commencement date: 31/12/2026\n"})
     packet = ctxmod.build_packet(project, "fill the form", budget=2000,
-                                 form_fields=["Legal name"])
-    assert "Acme Corporation" in packet          # value read after the synonym label
-    assert "~approx" in packet                    # and honestly flagged approximate
+                                 form_fields=["Effective date"])
+    line = _answer_line(packet, "Effective date")
+    assert "## Answers" in packet
+    assert "31/12/2026" in line          # value read after the synonym label
+    assert "~approx" in line             # and honestly flagged approximate
 
 
 def test_form_field_own_label_still_literal_and_exact(tmp_path):
-    # When the literal label is present, the value is exact (no alias fallback).
+    # Both labels present as distinct facts: the field's OWN literal label wins
+    # and is exact. (Indexing collapses newlines to spaces, so the two labelled
+    # facts are separated by a clause boundary to keep them distinct — as they
+    # would be on the two separate lines of the form.)
     project = _synced_alias_project(
-        tmp_path, {"legal name": ["vendor"]},
-        {"form_src.txt": "Legal name: Beta Industries\n"})
+        tmp_path, {"effective date": ["commencement date"]},
+        {"form_src.txt": "Effective date: 01/01/2026; Commencement date: 31/12/2026\n"})
+    packet = ctxmod.build_packet(project, "fill the form", budget=2000,
+                                 form_fields=["Effective date"])
+    line = _answer_line(packet, "Effective date")
+    assert "01/01/2026" in line          # own literal label wins
+    assert "31/12/2026" not in line      # not the synonym-labelled value
+    assert "~approx" not in line         # literal match → exact, not approximate
+
+
+def test_alias_conflict_is_flagged(tmp_path):
+    # Two docs disagree under SYNONYM labels of the same field — must surface as a
+    # conflict keyed on the field, not vanish because neither says "legal name".
+    project = _synced_alias_project(
+        tmp_path, {"legal name": ["vendor", "supplier"]},
+        {"a.txt": "Vendor: 11AAAAA1111A1Z5\n",
+         "b.txt": "Supplier: 22BBBBB2222B2Z5\n"})
     packet = ctxmod.build_packet(project, "fill the form", budget=2000,
                                  form_fields=["Legal name"])
-    assert "Beta Industries" in packet
+    conflicts = _section(packet, "## Conflicts")
+    assert conflicts                      # a Conflicts section exists
+    assert "a.txt" in conflicts and "b.txt" in conflicts   # both sources named
+
+
+def test_unrelated_token_not_tagged_approx(tmp_path):
+    # Query never contained the full phrase "service level"; a lone shared token
+    # ("owner") against group service level↔SLA must NOT be tagged ~approx.
+    project = _synced_alias_project(
+        tmp_path, {"service level": ["sla"]},
+        {"sla.txt": "SLA owner: alice@x.com\n"})
+    packet = ctxmod.build_packet(project, "service owner email", budget=2000)
+    assert "alice@x.com" in packet        # the hit was retrieved and packed
+    assert "~approx" not in packet        # but not falsely flagged as an alias hit
