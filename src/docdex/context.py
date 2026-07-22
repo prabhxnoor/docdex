@@ -25,9 +25,11 @@ from docdex import aliases as al
 # Lines that look like they carry a concrete value are the best "likely answer"
 # candidates. Conservative on purpose — the agent confirms; we only surface.
 VALUE_RE = re.compile(
-    r"([₹$€£]\s?\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
+    r"(-?\s?[₹$€£]\s?\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
     r"|(\b\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b)"
-    r"|(\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
+    r"|(\b\d{4}[/\-]\d{1,2}[/\-]\d{1,2}\b)"
+    r"|(\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b)"
+    r"|(-?\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
     r"|(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d+)"
     r"|([A-Z0-9]{6,}\d|[0-9]{2}[A-Z]{4,})"            # ID-ish tokens
     r"|([\w.+-]+@[\w-]+\.[\w.-]+)",                    # emails
@@ -191,6 +193,8 @@ def _amount(value: str) -> Optional[float]:
         n *= 1e6
     elif re.search(r"\bk\b", s):
         n *= 1e3
+    if re.match(r"\s*-", value):
+        n = -n
     return n
 
 
@@ -201,6 +205,8 @@ def _amount(value: str) -> Optional[float]:
 # normalized text so distinct dates stay distinct.
 _DATE_VALUE_RE = re.compile(
     r"(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b)"
+    r"|(\d{4}[/\-]\d{1,2}[/\-]\d{1,2}\b)"
+    r"|(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b)"
     r"|(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d+)",
     re.IGNORECASE)
 
@@ -215,7 +221,7 @@ def _value_key(value: str):
         # A numeric date is normalized (delimiter + zero-padding) so the SAME date
         # written differently ('31-12-2026' / '01/02/2026') is one key, not a false
         # conflict. Month-name dates keep their whitespace/case-normalized text.
-        if re.fullmatch(r"\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}", d):
+        if re.fullmatch(r"\d{1,4}[/\-]\d{1,2}[/\-]\d{1,4}", d):
             d = "/".join(str(int(p)) for p in re.split(r"[/\-]", d))
         return ("date", d)
     n = _amount(value)
@@ -271,6 +277,8 @@ def _approx_match(text: str, content: set, alias_extra: Optional[set] = None) ->
     (legal name↔vendor), not as a literal token."""
     toks = set(tokenize(text))
     tok_stems = {stem(t) for t in toks}
+    if content and all(t in toks for t in content):
+        return False                      # every query content-term is literal → exact
     for t in content:
         if t not in toks and stem(t) in tok_stems:
             return True
@@ -315,7 +323,7 @@ def _read_inv(project: Project):
     never swallows the failure into an empty map (DDX-035)."""
     try:
         return (read_inventory(project.inventory_path), None)
-    except DocdexError as e:
+    except (DocdexError, OSError, ValueError, UnicodeDecodeError) as e:
         return ({}, str(e))
 
 
@@ -386,7 +394,7 @@ def _conflicts(items, mtimes: dict):
         for value, source, line in members:
             by_norm.setdefault(_value_key(value), []).append((value, source, line))
         if len(by_norm) >= 2:
-            reps = [max(group, key=lambda vsl: mtimes.get(vsl[1], ""))
+            reps = [max(group, key=lambda vsl: (mtimes.get(vsl[1], ""), _authority(vsl[1]), vsl[1]))
                     for group in by_norm.values()]
             reps.sort(key=lambda vsl: (mtimes.get(vsl[1], ""), _authority(vsl[1]), vsl[1]),
                       reverse=True)
@@ -474,7 +482,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     used = HEADER_RESERVE
     packed_found: List[dict] = []
     packed_weak: List[dict] = []
-    dropped_fields: List[str] = []
+    dropped_fields: List[dict] = []
     if budget_eff:
         for r in resolved:
             if r["hit"] is None:
@@ -485,7 +493,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
                 (packed_found if r["has_value"] else packed_weak).append(r)
                 used += cost
             else:
-                dropped_fields.append(r["label"])
+                dropped_fields.append(r)
 
     top_score = max((c["score"] for c in pool), default=0.0)
     # A relative floor only when scores are meaningful; when every hit scores ~0
@@ -627,8 +635,11 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         if budget_eff <= 0:
             out.append(f"- everything (budget was {requested}) — rerun with --budget {bigger}")
         else:
-            for fld in dropped_fields:
-                out.append(f"- {fld}: answer found but cut to fit the budget")
+            for r in dropped_fields:
+                if r.get("has_value"):
+                    out.append(f"- {r['label']}: answer found but cut to fit the budget")
+                else:
+                    out.append(f"- {r['label']}: label matched but dropped before a value was confirmed")
             if evidence_truncated:
                 out.append("- some supporting evidence was not packed")
             if over_budget:
@@ -658,7 +669,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     out.append("")
 
     gap = (missing_fields[0] if missing_fields else
-           dropped_fields[0] if dropped_fields else
+           dropped_fields[0]["label"] if dropped_fields else
            " ".join(sorted(missing_terms)) if missing_terms else "")
     if gap:
         out += ["## Suggested next call",
