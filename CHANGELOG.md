@@ -10,9 +10,23 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Next: **v0.5.0** — meaning-aware search (aliases, stemming, reranking) so "legal
-name" finds "Vendor", plus recency/authority weighting on the conflict layer. See
+Next: **v0.5.1** — optional embeddings / RRF via `DOCDEX_EMBED_CMD` (local-only),
+which completes M1's meaning-aware search and was deferred from v0.5.0. See
 [ROADMAP.md](ROADMAP.md).
+
+## [0.5.0] — 2026-07-22 — "Meaning-aware search"
+
+docdex now matches *meaning*, not just exact words: Porter **stemming**
+(`governing`↔`governed`), user-defined **synonyms** (`legal name`→`vendor`), a
+**utility reranker** that floats the answer-bearing excerpt to the top, and richer
+**conflict detection** (dates/amounts, recency + a transparent authority hint).
+Every piece keeps the "never confidently wrong" contract — approximate matches are
+tagged `~approx`, values stay literal, conflicts are surfaced not resolved — and
+an adversarial external audit hardened the value/date handling. The fifth M1
+piece, **optional embeddings/RRF, is deferred to v0.5.1** (it's off by default
+anyway — it only activates with a local `DOCDEX_EMBED_CMD`). 226 tests. Also folds
+in the binary-file extraction fix. Per SemVer, this release is versioned for what
+it ships; the deferred piece lands in a follow-on minor.
 
 ### Added
 
@@ -51,6 +65,19 @@ name" finds "Vendor", plus recency/authority weighting on the conflict layer. Se
   plain terms:* you're more likely to get the excerpt that actually answers the
   question in the first slot. Deterministic and always on. Third of five v0.5.0
   "meaning-aware search" pieces.
+- **Conflicts are caught across more value formats and weighted by recency +
+  authority.** When two sources give different values for the same thing, docdex
+  flags it — and now it reliably catches disagreeing **dates** (`31/12/2026` vs
+  `31/01/2027`, ISO `2026-12-31`, `15 Jan 2026`) and **amounts** (including
+  negatives, so a loss isn't read as a gain), which used to collapse to a bare
+  number and hide the disagreement. Each conflicting value is shown with its
+  source and date, newest first, plus a transparent filename "authority" hint (a
+  path containing `signed`/`executed`/`final` ranks above `draft`) — but every
+  value is still listed and docdex never picks a winner. *In plain terms:* if two
+  documents disagree on a date or amount you now see all of them, dated, with a
+  nudge on which looks most authoritative — never a silently-chosen answer.
+  Fourth of five v0.5.0 pieces (the recency/authority weighting the M2 seed
+  promised).
 
 ### Fixed
 
@@ -72,6 +99,18 @@ name" finds "Vendor", plus recency/authority weighting on the conflict layer. Se
   document with a few leaked control bytes stays clean in the index rather than
   contaminating it. Heavily non-ASCII text (Devanagari, accented Latin, currency
   symbols) is explicitly *not* mistaken for binary. 9 new tests.
+- **Value/date handling hardened against "confidently wrong" edge cases (external
+  audit).** An adversarial audit by an outside model tried to break the honesty
+  guarantees; this closes what it found: ISO and day-first dates were truncated to
+  a number and could hide a real date conflict; a negative amount (`-$500k`) read
+  as positive (a loss shown as a gain); a form field that matched a label but had
+  no clear value was dropped by the budget with the misleading note "answer found
+  but cut" (now "label matched but no value confirmed"); an exact hit was sometimes
+  tagged `~approx` just because a synonym word appeared elsewhere in the chunk; and
+  a corrupt/non-UTF-8 index file could crash `context` instead of degrading with a
+  clear message. *In plain terms:* the "never confidently wrong" promises were
+  stress-tested by an outside reviewer trying to break them, and the holes are
+  closed.
 
 ## [0.4.1] — 2026-06-18 — "One tidy home, state out of the cloud"
 

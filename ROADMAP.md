@@ -6,11 +6,11 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-07-22 (v0.5.0 in progress — shipped stemming (M1 piece 1),
-> the field-alias registry (piece 2, free-text synonyms via `.docdex/aliases.json`,
-> `~approx`-tagged), and the utility reranker (piece 3, value-bearing + coverage
-> over raw BM25); folds in the binary-file fix. Deferred to conflict v2:
-> synonym-aware form field-value extraction + conflict detection.)_
+> _Last updated: 2026-07-22 (SHIPPED **v0.5.0 "Meaning-aware search"** — M1 pieces
+> stemming, field-alias registry (free-text synonyms), utility reranker, and
+> conflict v2; hardened by an external adversarial audit; 226 tests; binary-file
+> fix folded in. Deferred to **v0.5.1**: optional embeddings/RRF. Deferred to a
+> later pass: synonym-aware form-field value-extraction + conflict detection.)_
 
 ## North star
 
@@ -121,6 +121,17 @@ foundation is solid enough to build them safely.
   working until migrated. Folds in the real-corpus fixes (password-protected PDFs;
   quieted extractor warnings). 167 tests. Reasoned from the two-laptop / OneDrive
   sync question.
+- **v0.5.0 — "Meaning-aware search"** (2026-07-22): **Phase 4 / M1** — docdex now
+  matches meaning, not just exact words. Porter **stemming** (`governing`↔
+  `governed`), user-defined **synonyms** (`.docdex/aliases.json`, free-text), a
+  **utility reranker** (floats the answer-bearing excerpt first), and **conflict
+  v2** (date/amount conflicts incl. ISO / day-first / negative amounts; recency +
+  a transparent filename authority hint; still surfaced, never auto-resolved).
+  `~approx` provenance throughout; values stay literal. Hardened by an adversarial
+  external audit (codex / Antigravity-Gemini) that stress-tested the honesty
+  guarantees. 226 tests. **The 5th M1 piece — optional embeddings/RRF — is deferred
+  to v0.5.1** (off by default anyway); synonym-aware *form-field* value-extraction
+  + conflict is deferred to a later pass.
 
 ---
 
@@ -238,7 +249,8 @@ Phase 3; moved one release back, deliberately gated behind Phase 3.)*
   that code.
 - ⬜ **Optional embeddings / RRF** via `DOCDEX_EMBED_CMD` (local-only) for pure
   paraphrase and folder discovery — exact IDs, amounts, dates, and missing-evidence
-  honesty stay lexical/structured.
+  honesty stay lexical/structured. **→ v0.5.1** — the one M1 piece deferred from
+  v0.5.0; off by default (needs a local embedder), so v0.5.0 shipped without it.
 - ⬜ **Conflict v2** — recency/authority weighting on top of Phase 3's grouping,
   still surfacing disagreement rather than auto-resolving.
 

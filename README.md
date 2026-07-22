@@ -123,7 +123,23 @@ pip install git+ssh://git@github.com/prabhxnoor/docdex.git
 pipx install git+https://github.com/prabhxnoor/docdex.git
 ```
 
-Upgrade everywhere with `pipx upgrade docdex`. Uninstall with `pipx uninstall docdex`.
+**Updating to a newer version** (docdex lives on GitHub; there's no PyPI release, so an update = pulling the latest from the repo). Use whichever matches how you installed it:
+
+```bash
+# Installed with pipx  →  upgrade in place …
+pipx upgrade docdex
+# …or force the very latest commit if the tag/version didn't change:
+pipx install --force git+ssh://git@github.com/prabhxnoor/docdex.git
+
+# Installed with plain pip  →
+pip install --upgrade git+ssh://git@github.com/prabhxnoor/docdex.git
+
+# Installed from a local clone (git clone + `pip install -e .`)  →
+#   just pull; an editable install runs the updated code immediately, no reinstall:
+git -C /path/to/docdex pull
+```
+
+Check what you're running with `docdex --version`. Uninstall with `pipx uninstall docdex` (or `pip uninstall docdex`). *Note: this updates the docdex **program**; to refresh a project's search **index** after new/changed documents, run `docdex sync` (see "Day-to-day updating").*
 
 Format support out of the box: `.docx`, `.pptx`, `.xlsx`/`.xlsm`, `.pdf`, plus plain-text formats (`.md`, `.txt`, `.csv`, `.json`, `.html`, source code, …). Legacy `.doc`/`.rtf` are converted via the built-in `textutil` on macOS; on Linux they're reported as unsupported rather than failing.
 
