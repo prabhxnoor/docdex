@@ -155,3 +155,32 @@ def test_authority_labels_render_and_verify_note(tmp_path):
     # both values surfaced, authoritative/newer first
     assert "42,000,000" in packet and "40,000,000" in packet, packet
     assert lines.index(auth_line[0]) < lines.index(draft_line[0]), packet
+
+
+# ---- 5. External-review (agy) fixes ----------------------------------------
+def test_month_name_date_conflict_detected(tmp_path):
+    """Month-name dates (Jan 31 vs Dec 31) must conflict too. Before the fix both
+    reduced to the day number 31 (via _amount) and the conflict was hidden."""
+    project = _project_with(tmp_path, {
+        "old.txt": "Renewal Jan 31 2026.\n",
+        "new.txt": "Renewal Dec 31 2026.\n"})
+    low = build_packet(project, "renewal", budget=3000).lower()
+    assert "## conflicts" in low, low
+    assert "jan" in low and "dec" in low, low
+
+
+def test_same_date_different_delimiter_not_conflicting(tmp_path):
+    """The same date written with different delimiters ('31/12/2026' vs
+    '31-12-2026') is ONE value — not a fabricated conflict."""
+    project = _project_with(tmp_path, {
+        "a.txt": "Closing date 31/12/2026.\n",
+        "b.txt": "Closing date 31-12-2026.\n"})
+    packet = build_packet(project, "closing date", budget=3000)
+    assert "## Conflicts" not in packet, packet
+
+
+def test_authority_handles_underscores():
+    """snake_case filenames must still get an authority hint (underscore is a word
+    char, so a bare \\b boundary would miss 'signed_contract')."""
+    assert _authority("signed_contract.pdf") == 1
+    assert _authority("draft_v1.txt") == -1

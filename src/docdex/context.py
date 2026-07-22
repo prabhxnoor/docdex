@@ -28,7 +28,7 @@ VALUE_RE = re.compile(
     r"([₹$€£]\s?\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
     r"|(\b\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b)"
     r"|(\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
-    r"|(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d)"
+    r"|(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d+)"
     r"|([A-Z0-9]{6,}\d|[0-9]{2}[A-Z]{4,})"            # ID-ish tokens
     r"|([\w.+-]+@[\w-]+\.[\w.-]+)",                    # emails
     re.I,
@@ -199,7 +199,10 @@ def _amount(value: str) -> Optional[float]:
 # would collapse to one key and a real date conflict would be silently hidden —
 # the very gap the VALUE_RE date fix set out to close. Key dates by their own
 # normalized text so distinct dates stay distinct.
-_DATE_VALUE_RE = re.compile(r"\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b")
+_DATE_VALUE_RE = re.compile(
+    r"(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b)"
+    r"|(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d+)",
+    re.IGNORECASE)
 
 
 def _value_key(value: str):
@@ -208,7 +211,13 @@ def _value_key(value: str):
     text key (so '31/12/2026' vs '31/01/2027' don't both reduce to 31 and hide a
     conflict); everything else compares by normalized text."""
     if _DATE_VALUE_RE.match(value.strip()):
-        return ("date", re.sub(r"\s+", " ", value).strip().lower())
+        d = re.sub(r"\s+", " ", value.strip().lower())
+        # A numeric date is normalized (delimiter + zero-padding) so the SAME date
+        # written differently ('31-12-2026' / '01/02/2026') is one key, not a false
+        # conflict. Month-name dates keep their whitespace/case-normalized text.
+        if re.fullmatch(r"\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}", d):
+            d = "/".join(str(int(p)) for p in re.split(r"[/\-]", d))
+        return ("date", d)
     n = _amount(value)
     if n is not None:
         return ("num", round(n, 2))
@@ -356,7 +365,8 @@ def _authority(source: str) -> int:
     """Transparent, deterministic authority HINT from the source path — never a
     resolver. +1 for an executed/signed/final-type name, -1 for a draft-type one,
     else 0. Used only as a same-recency tiebreak and shown as a label."""
-    return (1 if _AUTHORITY_POS.search(source) else 0) - (1 if _AUTHORITY_NEG.search(source) else 0)
+    s = source.replace("_", " ")   # underscores are word chars, so \b would miss snake_case
+    return (1 if _AUTHORITY_POS.search(s) else 0) - (1 if _AUTHORITY_NEG.search(s) else 0)
 
 
 def _conflicts(items, mtimes: dict):
@@ -378,7 +388,7 @@ def _conflicts(items, mtimes: dict):
         if len(by_norm) >= 2:
             reps = [max(group, key=lambda vsl: mtimes.get(vsl[1], ""))
                     for group in by_norm.values()]
-            reps.sort(key=lambda vsl: (mtimes.get(vsl[1], ""), _authority(vsl[1])),
+            reps.sort(key=lambda vsl: (mtimes.get(vsl[1], ""), _authority(vsl[1]), vsl[1]),
                       reverse=True)
             out.append((key, reps))
     return out
@@ -596,7 +606,9 @@ def build_packet(project: Project, task: str, budget: int = 3000,
                 date = f" ({mt[:10]})" if mt else ""
                 auth = "  · authoritative" if _authority(src) > 0 else (
                     "  · draft" if _authority(src) < 0 else "")
-                tag = "  ← newest" if i == 0 else ""
+                is_newest = (i == 0 and mt and
+                             (len(reps) < 2 or mt > mtimes.get(reps[1][1], "")))
+                tag = "  ← newest" if is_newest else ""
                 out.append(f"    - {val} — {src}{date}{auth}{tag}")
         out.append("")
 
