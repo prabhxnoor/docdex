@@ -276,6 +276,16 @@ def _pick_field_hit(hits: List[dict], label: str, extra_terms: set) -> Optional[
     return max(hits, key=utility)
 
 
+def _utility(cand: dict, terms: set) -> tuple:
+    """Task-utility sort key (ascending → best first): prefer chunks that carry a
+    value for a query term, then broader term coverage, then BM25, then a stable
+    path tiebreak. Reranks the recall from stemming/aliases toward precision."""
+    text = cand["text"]
+    value_bearing = 1 if _value_lines(text, terms) else 0
+    coverage = len({stem(t) for t in terms} & stemmed(text))
+    return (-value_bearing, -coverage, -cand["score"], cand["rel"])
+
+
 def _read_inv(project: Project):
     """(rows, error): rel → inventory row, or ({}, message) on corrupt inventory.
 
@@ -453,7 +463,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     evidence = []
     evidence_truncated = False
     if budget_eff:
-        for cand in sorted(pool, key=lambda c: -c["score"]):
+        for cand in sorted(pool, key=lambda c: _utility(c, terms)):
             key = (cand["rel"], cand["chunk"])
             if key in seen:
                 continue
@@ -638,6 +648,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         engine = "FTS5/BM25" if index_db.available(project) else "cache scorer (no FTS5)"
         out.append(f"- engine: {engine}")
         out.append(f"- tokenizer: {'tiktoken' if tok.using_real_tokenizer() else 'chars/4 estimate'}")
+        out.append("- ranking: utility (value-bearing · coverage · bm25)")
 
     # Token-exact accounting: report the budget against the *rendered* packet,
     # not a component-sum estimate that undercounts what the agent receives.
