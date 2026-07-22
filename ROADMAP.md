@@ -6,11 +6,11 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-07-22 (v0.5.0 in progress — shipped stemming (M1 piece 1)
-> and the field-alias registry (piece 2, free-text synonyms via
-> `.docdex/aliases.json`, `~approx`-tagged); folds in the binary-file fix.
-> Deferred to conflict v2: synonym-aware form field-value extraction + conflict
-> detection.)_
+> _Last updated: 2026-07-22 (v0.5.0 in progress — shipped stemming (M1 piece 1),
+> the field-alias registry (piece 2, free-text synonyms via `.docdex/aliases.json`,
+> `~approx`-tagged), and the utility reranker (piece 3, value-bearing + coverage
+> over raw BM25); folds in the binary-file fix. Deferred to conflict v2:
+> synonym-aware form field-value extraction + conflict detection.)_
 
 ## North star
 
@@ -227,8 +227,10 @@ Phase 3; moved one release back, deliberately gated behind Phase 3.)*
   synonym label, and flag conflicts across synonym-labelled values. Deferred
   because date/ID value extraction and conflict-keying need care to stay "never
   confidently wrong."
-- ⬜ **Utility reranker** — prefer label-local values, explicit label-value rows,
-  and source diversity over raw term frequency.
+- ✅ **Utility reranker** — evidence ordered by task utility (value-bearing +
+  query-term coverage, source diversity via MAX_PER_SOURCE) over raw BM25 term
+  frequency; deterministic, always on. The precision counterweight to
+  stemming/alias recall. (piece 3)
 - ⬜ **Stem-aware form field-value extraction** *(deferred from the stemming
   piece)* — make `_label_window` / field-value matching stem-aware (position-safe
   so a stem never lands mid-word), so a "Governing law" field pulls a value from
@@ -270,8 +272,9 @@ false-conflict cases, not reduce them.
   `Legal name → {Vendor, Supplier, Party, legal entity}`. Deterministic.
   Free-text search/context shipped; synonym-aware form-field extraction deferred to conflict v2.
 - ✅ **Stemming + light lemmatisation** so `governing/governed/governs` collide.
-- ⬜ **Optional reranking** of the top-N candidates (pluggable
-  `DOCDEX_RERANK_CMD`, off by default → stays deterministic unless you opt in).
+- ✅ **Reranking of the top-N candidates** — built-in deterministic utility rerank
+  (value-bearing + coverage) shipped (piece 3). A pluggable `DOCDEX_RERANK_CMD`
+  (off by default) stays an optional later add-on.
 - ⬜ **Hybrid lexical + vector fusion** (Reciprocal Rank Fusion) when
   `DOCDEX_EMBED_CMD` is set, so a real embedding model can bridge pure paraphrase
   while BM25 remains the dependency-free default.

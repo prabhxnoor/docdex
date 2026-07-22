@@ -42,6 +42,15 @@ name" finds "Vendor", plus recency/authority weighting on the conflict layer. Se
   and synonym-aware conflict detection, are a deliberately deferred follow-up (see
   [ROADMAP.md](ROADMAP.md)) — the free-text half ships now. Second of five v0.5.0
   "meaning-aware search" pieces.
+- **Better ranking: the useful excerpt comes first (utility reranker).** Evidence
+  is now ordered by task usefulness — a chunk that carries a labelled value and
+  covers more of your query's words ranks above one that merely repeats a word —
+  instead of by raw keyword frequency. This is the precision counterweight to the
+  wider recall from stemming and synonyms: docdex casts a broader net, then puts
+  the genuinely answer-bearing text at the top so it survives a tight budget. *In
+  plain terms:* you're more likely to get the excerpt that actually answers the
+  question in the first slot. Deterministic and always on. Third of five v0.5.0
+  "meaning-aware search" pieces.
 
 ### Fixed
 
