@@ -66,14 +66,18 @@ def test_fts_matches_inflected_variant(stem_project):
     assert any("contract.txt" in h["rel"] for h in hits)
 
 
-def test_schema_bumped_to_v2(stem_project):
+def test_build_records_current_schema_version(stem_project):
+    """`build` persists the version the code declares — the signal
+    `test_stale_schema_forces_rebuild` relies on to detect a stale tokenizer.
+    Asserted against the constant, not a literal, so a legitimate bump doesn't
+    fail a test that isn't about the number."""
     import sqlite3
     conn = sqlite3.connect(str(stem_project.index_db_path))
     try:
         val = conn.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
     finally:
         conn.close()
-    assert val[0] == "2"
+    assert val[0] == index_db.SCHEMA_VERSION
 
 
 def test_stale_schema_forces_rebuild(stem_project):

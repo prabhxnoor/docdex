@@ -9,8 +9,15 @@ and callers fall back to the pure-Python scorer.
 Tables:
   files(rel PK, sha1, mtime_iso, ext, top_folder, tokens)
   chunks(chunk_id PK, rel, chunk_index, start_offset, end_offset, tokens, text)
-  chunks_fts  -- FTS5 external-content mirror of chunks.text (porter tokenizer → stemming)
+  chunks_fts        -- FTS5 mirror of chunks.text, porter tokenizer (stem class)
+  chunks_fts_exact  -- FTS5 mirror of chunks.text, unicode61 (literal surface form)
   meta(key, value)
+
+Two mirrors, one text: a term is discriminating in whichever space it happens to
+be rare, so ranking takes the *stronger* of the two BM25 scores rather than
+trusting the stemmed space alone. Stemming a term whose literal form is selective
+but whose stem class is common ('terms' in 1 chunk → 'term' in 154) otherwise
+collapses its IDF and buries the one chunk that carries the answer.
 """
 from __future__ import annotations
 
@@ -23,7 +30,14 @@ from docdex.config import Project
 from docdex.inventory import read_inventory
 from docdex.search import tokenize
 
-SCHEMA_VERSION = "2"   # v2: FTS5 porter tokenizer (stemming). v1 auto-rebuilds.
+SCHEMA_VERSION = "3"   # v3: dual FTS (porter + unicode61), max-score fusion.
+                       # v1/v2 auto-rebuild on the next sync.
+
+# How many rows to pull from each mirror before fusing. Generous enough that a
+# chunk ranked mid-pack in one space still competes, bounded so a corpus-common
+# term can't drag the whole table into memory.
+FUSE_POOL_FACTOR = 5
+FUSE_POOL_MIN = 50
 
 
 def connect(project: Project) -> sqlite3.Connection:
@@ -101,6 +115,12 @@ def _init_schema(conn: sqlite3.Connection, has_fts: bool) -> None:
             "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5("
             "text, content='chunks', content_rowid='chunk_id', "
             "tokenize='porter unicode61')")
+        # The same text unstemmed: a query term's literal surface form keeps its
+        # own IDF here, so a rare plural is not flattened into a common singular.
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts_exact USING fts5("
+            "text, content='chunks', content_rowid='chunk_id', "
+            "tokenize='unicode61')")
     conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('schema', ?)",
                  (SCHEMA_VERSION,))
     conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('fts', ?)",
@@ -123,6 +143,7 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
             stored_ver = None
         if stored_ver is not None and stored_ver != SCHEMA_VERSION:
             conn.execute("DROP TABLE IF EXISTS chunks_fts")
+            conn.execute("DROP TABLE IF EXISTS chunks_fts_exact")
             force = True
             if not quiet:
                 print(f"Lexical index: schema {stored_ver}->{SCHEMA_VERSION}; "
@@ -171,9 +192,11 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
                     (rel, idx, start, end, tok.count_tokens(chunk), chunk))
 
         if has_fts and (changed or removed):
-            # External-content FTS5: rebuild keeps the mirror exactly in sync
+            # External-content FTS5: rebuild keeps the mirrors exactly in sync
             # without trigger bookkeeping. Fast at this scale and never drifts.
             conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
+            conn.execute(
+                "INSERT INTO chunks_fts_exact(chunks_fts_exact) VALUES('rebuild')")
         conn.commit()
 
         total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
@@ -210,36 +233,80 @@ def available(project: Project) -> bool:
         conn.close()
 
 
+def _mirror_rows(conn, table: str, match: str, folder: Optional[str],
+                 limit: int) -> List[sqlite3.Row]:
+    """Top `limit` rows from one FTS mirror. The (rel, chunk_index) tiebreak makes
+    truncation deterministic even when BM25 ties — which it does en masse once a
+    term matches most of the corpus."""
+    sql = (
+        f"SELECT c.chunk_id AS chunk_id, c.rel AS rel, "
+        f"c.chunk_index AS chunk_index, c.text AS text, c.tokens AS tokens, "
+        f"c.start_offset AS start_offset, bm25({table}) AS bm25 "
+        f"FROM {table} JOIN chunks c ON c.chunk_id = {table}.rowid "
+        f"WHERE {table} MATCH ?")
+    params: list = [match]
+    if folder:
+        sql += " AND c.rel LIKE ?"
+        params.append(f"%{folder}%")
+    sql += " ORDER BY bm25, c.rel, c.chunk_index LIMIT ?"
+    params.append(limit)
+    return conn.execute(sql, params).fetchall()
+
+
 def search(project: Project, query: str, folder: Optional[str] = None,
            limit: int = 8) -> List[dict]:
     """BM25-ranked chunk hits, best first. Empty list when nothing matches;
     raises FileNotFoundError when the FTS index is unavailable so the caller
-    can fall back."""
+    can fall back.
+
+    Each chunk is scored in both term spaces — literal (unicode61) and stem class
+    (porter) — and keeps the *stronger* score. Stemming then only ever adds
+    reachable evidence; it can no longer flatten a selective literal term into a
+    corpus-common stem and bury the chunk that carries the answer.
+    """
     if not available(project):
         raise FileNotFoundError("FTS index unavailable")
     match = _match_query(query)
     if match is None:
         return []
+    pool = max(limit * FUSE_POOL_FACTOR, FUSE_POOL_MIN)
     conn = connect(project)
     try:
-        sql = (
-            "SELECT c.rel AS rel, c.chunk_index AS chunk_index, "
-            "c.text AS text, c.tokens AS tokens, c.start_offset AS start_offset, "
-            "bm25(chunks_fts) AS bm25 "
-            "FROM chunks_fts JOIN chunks c ON c.chunk_id = chunks_fts.rowid "
-            "WHERE chunks_fts MATCH ?")
-        params: list = [match]
-        if folder:
-            sql += " AND c.rel LIKE ?"
-            params.append(f"%{folder}%")
-        sql += " ORDER BY bm25 LIMIT ?"
-        params.append(limit)
-        rows = conn.execute(sql, params).fetchall()
+        try:
+            exact_rows = _mirror_rows(conn, "chunks_fts_exact", match, folder, pool)
+        except sqlite3.OperationalError as exc:
+            # ONLY this exact mirror being absent means "the database predates v3".
+            # Corruption, a lock timeout, an I/O error — or some *other* missing
+            # table — must surface: answering from the surviving mirror would hand
+            # the agent a healthy-looking packet built from a broken index.
+            msg = str(exc)
+            if "no such table" not in msg or "chunks_fts_exact" not in msg:
+                raise
+            exact_rows = []
+        stem_rows = _mirror_rows(conn, "chunks_fts", match, folder, pool)
     finally:
         conn.close()
-    # bm25() returns lower=better; present a positive relevance for humans.
+    return _fuse([exact_rows, stem_rows], limit)
+
+
+def _fuse(mirrors: List[List], limit: int) -> List[dict]:
+    """Keep each chunk's strongest score across the mirrors, best first.
+
+    Ordering uses full BM25 precision; the score is rounded only for output.
+    Rounding first would manufacture ties between genuinely distinct scores and
+    hand the ranking to the (rel, chunk_index) tiebreak, which can invert them.
+    """
+    best: dict = {}
+    for rows in mirrors:
+        for r in rows:
+            score = -r["bm25"]          # bm25() is lower=better; flip it
+            prev = best.get(r["chunk_id"])
+            if prev is None or score > prev[0]:
+                best[r["chunk_id"]] = (score, r)
+    ordered = sorted(best.values(),
+                     key=lambda p: (-p[0], p[1]["rel"], p[1]["chunk_index"]))
     return [{
         "rel": r["rel"], "chunk_index": r["chunk_index"], "text": r["text"],
         "tokens": r["tokens"], "start_offset": r["start_offset"],
-        "score": round(-r["bm25"], 4),
-    } for r in rows]
+        "score": round(score, 4),
+    } for score, r in ordered[:limit]]
