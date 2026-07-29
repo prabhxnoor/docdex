@@ -39,3 +39,27 @@ def test_packet_never_fabricates_absent_field(tmp_path):
     assert len(covered) >= len(task_benchmark.FINDABLE) // 2
     from docdex import tokens as tok
     assert tok.count_tokens(packet) < 4000
+
+
+def test_packet_hash_ignores_only_the_index_timestamp():
+    """The determinism hash must survive a minute boundary but nothing else.
+
+    The packet header carries a wall-clock "Index: indexed ..." line. Hashing it raw
+    made `qa_release.py`'s determinism gate pass only when its runs happened to land
+    inside the same minute, and cry nondeterminism otherwise.
+    """
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmarks"))
+    from task_benchmark import canonical_packet
+
+    a = ("# context packet\nIndex: indexed 2026-07-29 23:55 — not re-checked\n"
+         "- Payment terms: net-45  [a.txt ·0]\n")
+    b = a.replace("23:55", "23:56")
+    assert canonical_packet(a) == canonical_packet(b), \
+        "hash still moves with the clock"
+
+    # But a real change — different citation — must still change the hash.
+    c = a.replace("[a.txt ·0]", "[b.txt ·3]")
+    assert canonical_packet(a) != canonical_packet(c), \
+        "normalisation is too aggressive; it hid a citation change"

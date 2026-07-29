@@ -27,7 +27,7 @@ Notably, docdex does **not** fabricate these — it lists them under `## Missing
 Task: fill the vendor onboarding form
 Coverage: 12 fields · 2 found · 9 weak · 1 missing
 Budget: 3000 requested · ~1595 used (≈ chars/4) · 1405 free
-Index: indexed 2026-07-29 23:55 — not re-checked (run `docdex status` to find new files)
+Index: indexed <normalized>
 
 ## Answers
 - Liability cap: under this agreement is INR 6.5 crore.  [Misc/document1 (4).pdf ·3]

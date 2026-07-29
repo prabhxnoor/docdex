@@ -220,6 +220,18 @@ def field_attribution(packet: str, fields) -> dict:
     return {f: out.get(f, {"section": "absent", "source": ""}) for f in fields}
 
 
+# The packet header reports when the index was last built — a wall-clock stamp that
+# changes every minute. Hashing it raw would make the determinism check flaky (it
+# only passes when two runs land inside the same minute) while telling us nothing.
+# Everything else in the packet — ranking, citations, values, section order — stays
+# in the hash.
+_VOLATILE_LINE = re.compile(r"^Index: indexed .*$", re.MULTILINE)
+
+
+def canonical_packet(packet: str) -> str:
+    return _VOLATILE_LINE.sub("Index: indexed <normalized>", packet)
+
+
 def method_context(project, ground_truth, fields, budget):
     packet = ctxmod.build_packet(project, "fill the vendor onboarding form",
                                  budget=budget, form_fields=fields)
@@ -230,8 +242,10 @@ def method_context(project, ground_truth, fields, budget):
             "fields": field_attribution(packet, fields),
             # A hash of the whole packet: the coverage/token numbers can stay
             # identical while ranking, citations or section order change, so
-            # determinism has to be checked against the bytes.
-            "packet_sha256": hashlib.sha256(packet.encode("utf-8")).hexdigest(),
+            # determinism has to be checked against the bytes — minus the one
+            # wall-clock line (see canonical_packet).
+            "packet_sha256": hashlib.sha256(
+                canonical_packet(packet).encode("utf-8")).hexdigest(),
             "packet": packet}
 
 
@@ -306,7 +320,9 @@ def main():
         "`## Missing` so the agent knows to look further, which is the safe behavior.",
         "", "## Example packet (excerpt)", "```",
     ]
-    lines += ctx["packet"].splitlines()[:16]
+    # Canonicalised: a checked-in report shouldn't churn every minute because the
+    # embedded excerpt carries the index's wall-clock stamp.
+    lines += canonical_packet(ctx["packet"]).splitlines()[:16]
     lines += ["```"]
 
     (HERE / "RESULTS_TASK.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
