@@ -2,11 +2,11 @@
   "files": 115,
   "findable": 11,
   "absent": 1,
-  "full_tokens": 30635,
+  "full_tokens": 30776,
   "results": {
     "read-all (budget)": {
       "covered": [],
-      "tokens": 203
+      "tokens": 351
     },
     "search-loop": {
       "covered": [
@@ -22,7 +22,7 @@
         "Annual contract value",
         "Effective date"
       ],
-      "tokens": 20228
+      "tokens": 20176
     },
     "docdex context": {
       "covered": [
@@ -31,14 +31,66 @@
         "Registered address",
         "Liability cap",
         "Payment terms",
+        "Governing law",
         "Primary contact email",
         "Annual contract value",
         "Effective date"
       ],
-      "tokens": 1571,
+      "tokens": 1595,
       "honest_absent": [
         "Bank IFSC"
-      ]
+      ],
+      "fields": {
+        "Legal name": {
+          "section": "weak",
+          "source": "Contracts/draft_085.md \u00b70"
+        },
+        "GST number": {
+          "section": "weak",
+          "source": "Archive/Final_v3_USE.xlsx \u00b71"
+        },
+        "PAN": {
+          "section": "weak",
+          "source": "Archive/Final_v3_USE.xlsx \u00b72"
+        },
+        "Registered address": {
+          "section": "weak",
+          "source": "Archive/Final_v3_USE.xlsx \u00b74"
+        },
+        "Liability cap": {
+          "section": "answers",
+          "source": "Misc/document1 (4).pdf \u00b73"
+        },
+        "Payment terms": {
+          "section": "weak",
+          "source": "Contracts/scan_8841 copy.docx \u00b76"
+        },
+        "Governing law": {
+          "section": "weak",
+          "source": "Contracts/scan_8841 copy.docx \u00b79"
+        },
+        "Renewal term": {
+          "section": "weak",
+          "source": "Finance/draft_094.md \u00b70"
+        },
+        "Primary contact email": {
+          "section": "weak",
+          "source": "Operations/notes_final.md \u00b73"
+        },
+        "Annual contract value": {
+          "section": "weak",
+          "source": "Finance/untitled (5).xlsx \u00b71"
+        },
+        "Effective date": {
+          "section": "answers",
+          "source": "Contracts/scan_8841 copy.docx \u00b713"
+        },
+        "Bank IFSC": {
+          "section": "missing",
+          "source": ""
+        }
+      },
+      "packet_sha256": "65f80a9cb24e9ad60d831130ab5a3586f44fdbbb0a8a286096269b00874adf00"
     }
   }
 }

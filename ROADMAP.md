@@ -6,11 +6,13 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-07-22 (SHIPPED **v0.5.0 "Meaning-aware search"** — M1 pieces
-> stemming, field-alias registry (free-text synonyms), utility reranker, and
-> conflict v2; hardened by an external adversarial audit; 226 tests; binary-file
-> fix folded in. Deferred to **v0.5.1**: optional embeddings/RRF. Deferred to a
-> later pass: synonym-aware form-field value-extraction + conflict detection.)_
+> _Last updated: 2026-07-29 (SHIPPED **v0.5.1 "Stemming that doesn't lose the
+> answer"** — fixes a precision collapse in v0.5.0 where stemming a selective
+> literal term flattened its IDF and buried the value-bearing chunk; dual FTS
+> mirrors with max-score fusion. Benchmark 8/11 → **9/11** fields, the first
+> coverage gain since the benchmark was written. 240 tests, new retrieval property
+> tests + a release QA gate. Next: **v0.5.2** meaning-aware form filling (the two
+> deferred form-field pieces), then **v0.5.3** optional embeddings/RRF.)_
 
 ## North star
 
@@ -132,6 +134,25 @@ foundation is solid enough to build them safely.
   guarantees. 226 tests. **The 5th M1 piece — optional embeddings/RRF — is deferred
   to v0.5.1** (off by default anyway); synonym-aware *form-field* value-extraction
   + conflict is deferred to a later pass.
+- **v0.5.1 — "Stemming that doesn't lose the answer"** (2026-07-29): the v0.5.0
+  stemming win came with a **precision collapse** nobody caught, because the
+  benchmark's headline held at 8/11 while one field was silently traded for
+  another. Root cause: porter stemmed index *and* query, so a term's literal form
+  was discarded for its stem class — and when the literal form was the selective
+  one (`terms` in 1 chunk of 167; stem `term` in 154) its IDF collapsed, the
+  value-bearing chunk fell from rank 0 to ~96, and the per-field candidate window
+  never saw it. The utility reranker couldn't help: it was starved, not wrong.
+  Fixed by indexing the text in **two FTS mirrors** (porter + unicode61) and
+  scoring each chunk as **max(exact, stem)** — "strongest evidence in either term
+  space" — so stemming can only add reachable evidence, never remove a precise
+  word. A naive "literal always first" rule was measured and rejected: it fixes
+  one direction and pushes the other direction's answer to rank 102. Benchmark
+  8/11 → **9/11** at 1,708 → 1,595 tokens, nothing lost vs *either* prior release.
+  External adversarial review (agy/gemini-3.6-flash-high) additionally caught a
+  bare `except OperationalError` that would have masked DB corruption as "old
+  schema", and score rounding that manufactured ranking ties. 240 tests, incl.
+  corpus-independent **property tests** (two of which fail on v0.5.0) and a
+  **release QA gate** that fails a release whose new tests don't fail on the base.
 
 ---
 
@@ -224,20 +245,28 @@ field-local extraction first." (`CONTEXT_EFFICIENCY_REVIEW.md` §5.)*
   exactly why the 108-test suite missed these — clean one-value-per-sentence
   corpora — so the new tests use dense / shared-label / Unicode / score-0 fixtures.
 
-**Phase 4 — Meaning-aware search + deeper conflict (→ v0.5.0). ← next.**  *(Was
-Phase 3; moved one release back, deliberately gated behind Phase 3.)*
+**Phase 4 — Meaning-aware search + deeper conflict (→ v0.5.0, precision repaired
+in v0.5.1).**  *(Was Phase 3; moved one release back, deliberately gated behind
+Phase 3.)* Free-text meaning-awareness is done; the two **form-field** pieces below
+are what remain, and they are **v0.5.2 ← next**.
 - ✅ **Stemming / lemmatisation** (`close`/`closed`, `governing`/`governed`) —
   FTS5 porter tokenizer + a vendored Python Porter as the authoritative match
   check; recall-favoring, with `~approx` provenance tags so the agent can verify.
+  **v0.5.1 repaired its precision cost**: stemming index *and* query discarded a
+  term's literal form for its stem class, so a selective literal (`terms`, 1 chunk
+  of 167) inherited the IDF of a corpus-common stem (`term`, 154) and the
+  value-bearing chunk fell out of the candidate window. Now indexed in two mirrors
+  (porter + unicode61) and scored `max(exact, stem)` — recall-only, never
+  precision-destroying.
 - ✅ **Field-alias registry** ("legal name" → "Vendor") — user-owned
   `.docdex/aliases.json` (curated editable starter, off when deleted),
   deterministic, contiguous-phrase, `~approx`-tagged, in `--explain`, never
   fabricates. **Free-text search/context** (piece 2).
 - ⬜ **Synonym-aware form field-value extraction + conflict detection** *(deferred
-  from the alias piece → fold into conflict v2)* — read a field value after a
-  synonym label, and flag conflicts across synonym-labelled values. Deferred
-  because date/ID value extraction and conflict-keying need care to stay "never
-  confidently wrong."
+  from the alias piece)* — read a field value after a synonym label, and flag
+  conflicts across synonym-labelled values. Deferred because date/ID value
+  extraction and conflict-keying need care to stay "never confidently wrong."
+  **→ v0.5.2.** This is the benchmark's remaining `Legal name` miss.
 - ✅ **Utility reranker** — evidence ordered by task utility (value-bearing +
   query-term coverage, source diversity via MAX_PER_SOURCE) over raw BM25 term
   frequency; deterministic, always on. The precision counterweight to
@@ -245,14 +274,17 @@ Phase 3; moved one release back, deliberately gated behind Phase 3.)*
 - ⬜ **Stem-aware form field-value extraction** *(deferred from the stemming
   piece)* — make `_label_window` / field-value matching stem-aware (position-safe
   so a stem never lands mid-word), so a "Governing law" field pulls a value from
-  a "governed by …" clause. Fold into the alias / reranker work, which reworks
-  that code.
+  a "governed by …" clause. **→ v0.5.2**, together with the synonym piece above:
+  both rework the same `_label_window` code, so they ship as one change.
 - ⬜ **Optional embeddings / RRF** via `DOCDEX_EMBED_CMD` (local-only) for pure
   paraphrase and folder discovery — exact IDs, amounts, dates, and missing-evidence
-  honesty stay lexical/structured. **→ v0.5.1** — the one M1 piece deferred from
-  v0.5.0; off by default (needs a local embedder), so v0.5.0 shipped without it.
-- ⬜ **Conflict v2** — recency/authority weighting on top of Phase 3's grouping,
-  still surfacing disagreement rather than auto-resolving.
+  honesty stay lexical/structured. **→ v0.5.3** (was v0.5.1, which the precision
+  fix took); off by default, needs a local embedder. Note v0.5.1 already built the
+  two-ranking fusion plumbing this will extend — a vector ranking becomes a third
+  input to the same merge.
+- ✅ **Conflict v2** — recency/authority weighting on top of Phase 3's grouping,
+  still surfacing disagreement rather than auto-resolving. Shipped in v0.5.0
+  (dates incl. ISO/day-first, negative amounts, deterministic tiebreak).
 
 **Phase 5 — Lifecycle & self-maintenance (M3 → v0.6.0).**  *(Was Phase 4.)* DB
 hygiene (`optimize`/`VACUUM`, prune deleted-file rows, rotate `inventory_history`)
@@ -300,11 +332,13 @@ Make docdex aware that documents change and disagree.
 > (v0.4.0) fixes the grouping/normalisation (DDX-031/032); the recency/authority
 > weighting below stays v0.5.0.
 
-- ⬜ **Show recency on every excerpt** — each evidence line already has a source;
-  add its `mtime` so "which is newer" is visible at a glance.
-- ⬜ **Conflict flagging** — when ≥2 sources give different values for the same
+- ✅ **Show recency on every excerpt** — each evidence line carries its source and
+  `mtime`, so "which is newer" is visible at a glance (v0.5.0).
+- ✅ **Conflict flagging** — when ≥2 sources give different values for the same
   question/field, the packet says so explicitly ("⚠ 2 sources disagree: *30*
   in `old.xlsx` (Jan), *40* in `new.xlsx` (Mar)") instead of silently picking one.
+  Seeded v0.3.0, grouping/normalisation fixed v0.4.0 (DDX-031/032), dates +
+  recency/authority weighting v0.5.0.
 - ⬜ **Optional recency-weighting** in ranking (a tunable, not a default — a newer
   draft isn't always the truth).
 - ⬜ **Same-family supersession hints** ("this looks like a newer version of X").
@@ -483,12 +517,17 @@ master index goes stale — an on-demand rebuild fixes that.
 
 ## Known limitations (honest, current)
 
-- Lexical matching only by default (M1) — "legal name" won't find "Vendor" unless
-  the corpus spells it out; pure paraphrase needs a local `DOCDEX_EMBED_CMD`.
-  Meaning-aware aliases / stemming / reranking land in v0.5.0.
-- Conflict handling is lexical with amount-normalization (M2) — disagreements are
-  surfaced with the newest source marked and equivalent amounts merged, but not
-  yet authority/recency-*ranked*.
+- Lexical matching by default (M1) — stemming, declared synonyms and utility
+  reranking shipped in v0.5.0 (precision repaired in v0.5.1), so `governing` finds
+  `governed` and a declared `legal name → Vendor` widens *free-text* search. Pure
+  paraphrase with no declared synonym still needs a local `DOCDEX_EMBED_CMD`
+  (v0.5.3).
+- **Form-field** matching is still literal (M1) — a field labelled `Legal name`
+  will not read its value from a clause that says `Vendor`, and a `Governing law`
+  field will not read one from `governed by …`. Free-text search bridges both; the
+  form-field half is **v0.5.2**. This is the benchmark's remaining 2 of 11 misses.
+- Conflict handling is lexical with amount/date normalization and recency+authority
+  weighting (M2) — disagreements are surfaced, never auto-resolved.
 - macOS/Linux only (M5); Windows unverified.
 
 ---
@@ -499,3 +538,57 @@ Trust/correctness first, then retrieval quality, then convenience. Every landed
 item updates the `[Unreleased]` section of [`CHANGELOG.md`](CHANGELOG.md) with a
 plain-English line. A release tags, pushes, and verifies a clean install from the
 built wheel before announcing.
+
+**Every release runs the QA gate before tagging** (added v0.5.1):
+
+```
+python3 benchmarks/qa_release.py --base <previous tag>
+```
+
+Four gates, all of which must pass: the suite is green on HEAD; the form benchmark
+is compared to the previous release **field by field** (a per-field diff, because
+v0.5.0's headline held at 8/11 while silently trading one field for another — a
+total-only check is blind to that); the benchmark is byte-identical across two
+runs; and — the unusual one — **the release's new tests are run against the base
+tree and at least one must fail there.** A regression test that passes on the code
+it was written to catch proves nothing, so the gate refuses to accept one. Gate 3
+measures the tests; the others measure the product.
+
+Substantive changes also get an **external cross-family adversarial review** before
+release (see the v0.5.1 entry): a Claude subagent reviewing Claude-written code
+shares its blind spots, so the reviewer is a different model family, framed as a
+devil's advocate. Its findings are **adjudicated against the code**, not accepted —
+of 6 findings on the v0.5.1 *diff*, one CRITICAL and two MAJOR were refuted by
+reading the code and constructing counter-corpora, and two real bugs were fixed
+with discriminating tests.
+
+**Review the tests, not just the code.** v0.5.1 added a second review pass aimed at
+the QA suite itself ("would these tests catch a variant of this bug?"). It was the
+higher-yield of the two: it found that a `COUNT(*)` assertion on an external-content
+FTS table proves nothing (it reads the content table, so an empty shadow index
+still reports healthy rows), that a determinism test comparing two calls in one
+process cannot see hash-order dependence, that an indexing-order test was vacuous
+because the sync sorts paths, and that an honesty test passed when the field
+vanished entirely. It also produced two corpora that exposed **real pre-existing
+bugs** (now tracked as `xfail(strict=True)`). Adjudicate these the same way — of 28
+findings, several were hypotheticals about arbitrary future edits rather than
+present defects.
+
+### QA debt (known blind spots)
+
+Honest list of what the suite still cannot see, so it is not mistaken for coverage:
+
+- ⬜ **Value-attribution oracle** — the benchmark credits a field when its value
+  appears *anywhere* in the packet, so a value that is right by accident counts and
+  an equivalently-rendered value (`₹6.5 cr` vs `INR 6.5 crore`) counts as lost. The
+  per-field section/source diff in the gate mitigates but does not replace typed
+  value comparison.
+- ⬜ **Real document structure** — fixtures are simple paragraphs, one-sheet
+  workbooks and linear PDFs. Nothing covers `.docx` headers/text boxes/tracked
+  changes, multi-sheet or merged-cell workbooks, multi-column PDFs, or scans. Needs
+  checked-in golden files asserting both extracted text and packet provenance.
+- ⬜ **Scale tier** — no automated 10k-file check for index size, latency, lock
+  duration, or rebuild cost after a one-file edit; v0.5.1's scale numbers were
+  measured by hand on the real corpus.
+- ⬜ **Unicode breadth** — NFD/NFC (tracked as a failing `xfail`), plus CJK
+  segmentation, RTL and combining marks are untested.

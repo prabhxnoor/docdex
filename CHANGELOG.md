@@ -10,9 +10,114 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Next: **v0.5.1** — optional embeddings / RRF via `DOCDEX_EMBED_CMD` (local-only),
-which completes M1's meaning-aware search and was deferred from v0.5.0. See
-[ROADMAP.md](ROADMAP.md).
+Next: **v0.5.2** — meaning-aware *form filling*: reading a field's value from a
+label written as a synonym or a different inflection (the two pieces deferred from
+v0.5.0). Optional embeddings / RRF via `DOCDEX_EMBED_CMD` follows in **v0.5.3**.
+See [ROADMAP.md](ROADMAP.md).
+
+## [0.5.1] — 2026-07-29 — "Stemming that doesn't lose the answer"
+
+v0.5.0's stemming could **bury the very chunk that held your answer**. This fixes
+it, and the form-filling benchmark improves for the first time since it was
+written: **9 of 11 fields** recovered, up from 8, at slightly *fewer* tokens.
+
+### Fixed
+
+- **A rare word is no longer flattened into a common one.** v0.5.0 stemmed both
+  the index and your query, so a word's literal form was discarded in favour of
+  its stem. When the literal form was the *rare, discriminating* one, that
+  destroyed the ranking signal: on the benchmark corpus the word `terms` appeared
+  in exactly **one** chunk — the one saying `Payment terms are net-45` — while its
+  stem `term` appeared in **154 of 167**. So the one chunk that answered the
+  question scored ~0 alongside everything else, ranked ~96th, never entered the
+  candidate window, and the field came back with no value. Meanwhile the *reverse*
+  case (`governing law` finding `governed by the laws of…`) started working — one
+  cause, opposite outcomes, decided purely by whether a stem happened to be rare
+  or common. *In plain terms:* asking for a distinctive word could return
+  everything **except** the document that actually answered you, and which fields
+  worked was close to luck. The total looked unchanged (8/11 before and after)
+  because one field was silently traded for another — the headline number hid it.
+  **How it's fixed:** docdex now indexes your text **twice** — once as written and
+  once stemmed — and scores each passage on whichever version gives the stronger
+  match. Stemming can now only ever *add* findable evidence; it can no longer take
+  a precise word away. Both cases now work together: 8/11 → **9/11 fields**, 1,708
+  → 1,595 tokens. The lexical index rebuilds itself once on the next `sync` (no
+  action needed).
+- **A broken index can no longer masquerade as a healthy one.** While adding the
+  second index, a too-broad error handler would have treated *any* SQLite failure —
+  corruption, a lock timeout, an I/O error — as "this database is just an older
+  version" and quietly answered from the surviving half. Now only a genuinely
+  absent second index takes that path; real failures surface. *In plain terms:*
+  docdex would rather tell you it's broken than hand you a confident-looking answer
+  built on a damaged index. (Caught by external adversarial review before release.)
+- **Ranking no longer invents ties.** Relevance scores were rounded to four
+  decimals *before* sorting, so two genuinely different scores could tie and be
+  reordered alphabetically — putting the less relevant passage first. Sorting now
+  uses full precision and rounds only for display.
+
+### Added
+
+- **Retrieval property tests** (`tests/test_retrieval_properties.py`) — rules that
+  must hold for *any* corpus, not just a hand-built one: a word occurring in a
+  single passage must always be findable; adding files that don't contain your
+  answer must never take the answer away; ranking must not depend on the order
+  files were indexed. The two that describe this release's bug **fail on v0.5.0**
+  and pass here, which is how we know they're real tests and not decoration.
+- **A release QA gate** (`benchmarks/qa_release.py`) — run before tagging. Five
+  gates: the suite is green (verified from JUnit XML, so a collection error or an
+  empty run can't pass as "green"); the benchmark is compared to the previous
+  release **field by field** — value, section *and* cited source, plus honest
+  absent-field handling and a token ceiling — rather than by the headline count
+  that hid this bug; the packet's hash is stable across runs *and across
+  `PYTHONHASHSEED` values*, so ranking can't depend on dict iteration order; and
+  the verdict states whether it verified a commit or a dirty working tree.
+  Unusually, it also runs the release's *new* tests against the *old* code and
+  **fails the release unless at least one of them fails there on an assertion**. A
+  regression test that passes on the code it was written to catch is worthless —
+  and one that merely errors because it references new internals proves nothing
+  either, so setup errors don't satisfy the gate.
+
+### Known gaps (tracked, not fixed here)
+
+Two real gaps were found by adversarial review of this release's *test suite*.
+Both reproduce identically on v0.5.0 and v0.5.1 — they are pre-existing, not
+caused by this fix — and both are now `xfail(strict=True)` tests, so they stay
+visible and fail loudly the moment they start passing:
+
+- **A label without a value can still crowd out the answer.** With 60 documents
+  containing the exact phrase "Payment terms" but no value, the one document
+  saying `net-45` is buried: all 61 match the label equally well, and ranking
+  cannot see which one carries an actual value. This is the label-vs-value gap
+  behind the benchmark's 2 remaining misses, and it is what **v0.5.2** targets.
+- **A query typed with decomposed accents doesn't match composed text.** `Échéance`
+  written as `e` + a combining accent (NFD) finds nothing in a document storing it
+  as a single character (NFC). Fixing it means normalising both the cached text and
+  the query, which changes indexed content — so it is deferred to a release that
+  already carries an index rebuild.
+
+Also known and not covered by any test: the benchmark credits a field when its
+value appears *anywhere* in the packet, so a value that is right by accident counts;
+and no automated tier exercises real document structure (multi-sheet workbooks,
+`.docx` headers and text boxes, merged cells) or 10k-file scale — the scale numbers
+above were measured by hand.
+
+### Notes
+
+- **What the second index costs**, measured on a real 10,486-file / 92,433-chunk
+  corpus (not a synthetic one — synthetic text has a much smaller vocabulary and
+  flatters these numbers):
+  - **Disk: +26%** for the lexical index — 277 MB → 349 MB. Both mirrors share the
+    stored text, so this is the inverted index only. (A 4,000-file synthetic corpus
+    showed just +10%; real documents have far richer vocabulary.)
+  - **Query: 1.3×–1.9× slower**, worst observed 80 ms vs 41 ms, typical 25–46 ms.
+    Still well inside the "flat, sub-100 ms at scale" property the FTS5 engine was
+    adopted for.
+  - **One-time migration:** the first `sync` after upgrading rebuilds the lexical
+    index once from the `.txt` caches (they remain the source of truth, so nothing
+    is re-extracted from your documents). Building the second mirror itself takes
+    ~3 s at this scale; the surrounding reindex is the bulk of the time. Until that
+    sync runs, `search` keeps working against the old single mirror.
+- 240 tests (14 new).
 
 ## [0.5.0] — 2026-07-22 — "Meaning-aware search"
 
