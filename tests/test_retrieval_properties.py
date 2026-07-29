@@ -326,13 +326,15 @@ def test_p7_packet_is_identical_across_processes_and_hash_seeds(tmp_path):
 # passing, which is the signal to delete the marker.
 
 @requires_fts5
-@pytest.mark.xfail(strict=True, reason=(
-    "v0.5.2 target: when many chunks tie on a field's label, retrieval has no way "
-    "to prefer the one that carries a VALUE after it. 60 decoys containing the "
-    "exact label 'Payment terms' but no value bury the answer at rank 60, outside "
-    "the per-field window where the value-preferring reranker could see it. This is "
-    "the label-vs-value gap behind the benchmark's remaining 2 misses."))
 def test_value_bearing_chunk_survives_exact_label_decoys(tmp_path):
+    """FIXED in v0.5.2 (was xfail here from v0.5.1).
+
+    When many chunks tie on a field's label, retrieval had no way to prefer the one
+    carrying a value: 60 decoys containing the exact phrase `Payment terms` but no
+    value buried the answer at rank 60. The scores were not even tied — they differed
+    at the 9th decimal on length-normalisation noise — so `chunks.has_value` now
+    breaks ties bucketed at `SCORE_GRAIN`.
+    """
     root = tmp_path / "decoy"
     root.mkdir()
     (root / "z_answer.txt").write_text(

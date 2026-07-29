@@ -6,7 +6,15 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-07-29 (SHIPPED **v0.5.1 "Stemming that doesn't lose the
+> _Last updated: 2026-07-30 (SHIPPED **v0.5.2 "Form filling that understands the
+> words"** — form fields now read a value from a label written as a different
+> inflection or a declared synonym, in strict exact→stem→synonym precedence, with
+> anything non-literal tagged `~approx`; and a value-bearing chunk can no longer be
+> buried by chunks that repeat the label without answering. Benchmark **10/11** at
+> fewer tokens. 259 tests. Remaining form gap: a value written BEFORE its label
+> ("… as the Vendor") → v0.5.3.)_
+>
+> _Previously: 2026-07-29 (SHIPPED **v0.5.1 "Stemming that doesn't lose the
 > answer"** — fixes a precision collapse in v0.5.0 where stemming a selective
 > literal term flattened its IDF and buried the value-bearing chunk; dual FTS
 > mirrors with max-score fusion. Benchmark 8/11 → **9/11** fields, the first
@@ -134,6 +142,22 @@ foundation is solid enough to build them safely.
   guarantees. 226 tests. **The 5th M1 piece — optional embeddings/RRF — is deferred
   to v0.5.1** (off by default anyway); synonym-aware *form-field* value-extraction
   + conflict is deferred to a later pass.
+- **v0.5.2 — "Form filling that understands the words"** (2026-07-30): closed the
+  two form-field pieces deferred since v0.5.0. A field's label is now located in
+  strict precedence — **exact words → different word ending → declared synonym** — so
+  a literal label present anywhere always decides and a synonym can never hijack a
+  field that already matched. Position-safe via real token offsets (the old
+  `rfind()` would have found the stem `govern` inside `government`). Non-literal
+  matches are tagged `~approx`, and `_field_values` is synonym-aware so two documents
+  labelling the same fact differently are compared rather than each standing
+  unchallenged. Also fixed the label-vs-value starvation tracked as an xfail in
+  v0.5.1: `chunks.has_value` (schema 4) breaks **ties only** toward a chunk carrying
+  a number/date/amount/ID, which is what let 60 label-repeating decoys bury the one
+  answering chunk. Those 60 scores were not even equal — they differed in the 9th
+  decimal on length-normalisation jitter once IDF collapsed, so "close enough to be
+  noise" is now treated as a tie (`SCORE_GRAIN`). Benchmark **9/11 → 10/11 at 1,595 →
+  1,428 tokens** (`Renewal term` closed). 259 tests. Remaining: a value written
+  *before* its label → v0.5.3.
 - **v0.5.1 — "Stemming that doesn't lose the answer"** (2026-07-29): the v0.5.0
   stemming win came with a **precision collapse** nobody caught, because the
   benchmark's headline held at 8/11 while one field was silently traded for
@@ -262,24 +286,32 @@ are what remain, and they are **v0.5.2 ← next**.
   `.docdex/aliases.json` (curated editable starter, off when deleted),
   deterministic, contiguous-phrase, `~approx`-tagged, in `--explain`, never
   fabricates. **Free-text search/context** (piece 2).
-- ⬜ **Synonym-aware form field-value extraction + conflict detection** *(deferred
-  from the alias piece)* — read a field value after a synonym label, and flag
-  conflicts across synonym-labelled values. Deferred because date/ID value
-  extraction and conflict-keying need care to stay "never confidently wrong."
-  **→ v0.5.2.** This is the benchmark's remaining `Legal name` miss.
+- ✅ **Synonym-aware form field-value extraction + conflict detection** — shipped
+  v0.5.2. A field reads its value after a declared-synonym label (phrase-level, as a
+  contiguous stemmed run — `legal name` has no term-by-term correspondence with
+  `vendor`), and `_field_values` is synonym-aware so two documents labelling the same
+  fact differently are compared instead of each standing unchallenged. Non-literal
+  matches are tagged `~approx`.
 - ✅ **Utility reranker** — evidence ordered by task utility (value-bearing +
   query-term coverage, source diversity via MAX_PER_SOURCE) over raw BM25 term
   frequency; deterministic, always on. The precision counterweight to
   stemming/alias recall. (piece 3)
-- ⬜ **Stem-aware form field-value extraction** *(deferred from the stemming
-  piece)* — make `_label_window` / field-value matching stem-aware (position-safe
-  so a stem never lands mid-word), so a "Governing law" field pulls a value from
-  a "governed by …" clause. **→ v0.5.2**, together with the synonym piece above:
-  both rework the same `_label_window` code, so they ship as one change.
+- ✅ **Stem-aware form field-value extraction** — shipped v0.5.2 alongside the
+  synonym piece, as predicted (both rework the same code). Position-safe via real
+  token offsets: the old `rfind()` substring search would have located the stem
+  `govern` inside `government`. Strict exact→stem→synonym precedence, so a literal
+  label present anywhere always decides.
+- ⬜ **Apposition: a value written BEFORE its label** — "Helios Components Pvt Ltd
+  **as the Vendor**", "Acme (the **Supplier**)". The standard way contracts name a
+  party, and the benchmark's last miss (`Legal name`). **→ v0.5.3.** Needs a required
+  connective, a bounded lookback and a clause-boundary stop: unbounded backwards
+  reading is the DDX-029 cross-field leakage class ("Payment terms are net-45.
+  Vendor: Acme" would hand `net-45` to `Legal name`), so it gets its own change and
+  its own review rather than riding along with something else.
 - ⬜ **Optional embeddings / RRF** via `DOCDEX_EMBED_CMD` (local-only) for pure
   paraphrase and folder discovery — exact IDs, amounts, dates, and missing-evidence
-  honesty stay lexical/structured. **→ v0.5.3** (was v0.5.1, which the precision
-  fix took); off by default, needs a local embedder. Note v0.5.1 already built the
+  honesty stay lexical/structured. **→ v0.5.4** (was v0.5.1, which the precision fix
+  took, then v0.5.3, which apposition takes); off by default, needs a local embedder. Note v0.5.1 already built the
   two-ranking fusion plumbing this will extend — a vector ranking becomes a third
   input to the same merge.
 - ✅ **Conflict v2** — recency/authority weighting on top of Phase 3's grouping,
@@ -522,10 +554,13 @@ master index goes stale — an on-demand rebuild fixes that.
   `governed` and a declared `legal name → Vendor` widens *free-text* search. Pure
   paraphrase with no declared synonym still needs a local `DOCDEX_EMBED_CMD`
   (v0.5.3).
-- **Form-field** matching is still literal (M1) — a field labelled `Legal name`
-  will not read its value from a clause that says `Vendor`, and a `Governing law`
-  field will not read one from `governed by …`. Free-text search bridges both; the
-  form-field half is **v0.5.2**. This is the benchmark's remaining 2 of 11 misses.
+- **Form-field** matching is meaning-aware since v0.5.2 — a field reads its value
+  from a label written as a different inflection or a declared synonym, tagged
+  `~approx`. The remaining gap is a value written **before** its label ("… as the
+  Vendor"), which is the benchmark's last miss and **v0.5.3**.
+- **Values are typed** — numbers, dates, amounts, IDs, emails. A value docdex cannot
+  type (a company name) is shown under "needs follow-up" with the text following its
+  label, never asserted as a confident answer.
 - Conflict handling is lexical with amount/date normalization and recency+authority
   weighting (M2) — disagreements are surfaced, never auto-resolved.
 - macOS/Linux only (M5); Windows unverified.

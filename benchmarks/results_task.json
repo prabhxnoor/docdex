@@ -22,7 +22,7 @@
         "Annual contract value",
         "Effective date"
       ],
-      "tokens": 20176
+      "tokens": 20096
     },
     "docdex context": {
       "covered": [
@@ -32,18 +32,19 @@
         "Liability cap",
         "Payment terms",
         "Governing law",
+        "Renewal term",
         "Primary contact email",
         "Annual contract value",
         "Effective date"
       ],
-      "tokens": 1595,
+      "tokens": 1433,
       "honest_absent": [
         "Bank IFSC"
       ],
       "fields": {
         "Legal name": {
           "section": "weak",
-          "source": "Contracts/draft_085.md \u00b70"
+          "source": ""
         },
         "GST number": {
           "section": "weak",
@@ -67,11 +68,11 @@
         },
         "Governing law": {
           "section": "weak",
-          "source": "Contracts/scan_8841 copy.docx \u00b79"
+          "source": ""
         },
         "Renewal term": {
-          "section": "weak",
-          "source": "Finance/draft_094.md \u00b70"
+          "section": "answers",
+          "source": "Misc/document1 (4).pdf \u00b77"
         },
         "Primary contact email": {
           "section": "weak",
@@ -90,7 +91,7 @@
           "source": ""
         }
       },
-      "packet_sha256": "d4d0a2b903c919770735bb672cf21060458e5743ee580ad349509b8a9a3e2976"
+      "packet_sha256": "a9a779996ab86a97aae9750b1f626420506d917e54910d2f77a5a00daf24ac8d"
     }
   }
 }

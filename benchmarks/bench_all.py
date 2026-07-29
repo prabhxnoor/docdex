@@ -207,8 +207,10 @@ def render(hist: dict) -> str:
     return "\n".join(L)
 
 
-def git(ref: str, what: str) -> str:
-    return run(["git", "rev-parse", what.replace("REF", ref)], REPO).stdout.strip()
+def git(*args: str) -> str:
+    """`git rev-parse <args>` — each arg separate, or git parses "--short HEAD" as a
+    single (invalid) revision and the recorded sha is garbage."""
+    return run(["git", "rev-parse", *args], REPO).stdout.strip()
 
 
 def version_of(tree: Path) -> str:
@@ -220,8 +222,8 @@ def version_of(tree: Path) -> str:
 
 
 def cmd_record() -> int:
-    sha = git("HEAD", "--short REF")
-    rec = measure(REPO, git("HEAD", "--abbrev-ref REF") or "HEAD", sha,
+    sha = git("--short", "HEAD")
+    rec = measure(REPO, git("--abbrev-ref", "HEAD") or "HEAD", sha,
                   version_of(REPO))
     rec["ref"] = f"v{rec['version']}"
     hist = load_history()

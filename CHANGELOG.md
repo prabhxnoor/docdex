@@ -10,10 +10,113 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Next: **v0.5.2** — meaning-aware *form filling*: reading a field's value from a
-label written as a synonym or a different inflection (the two pieces deferred from
-v0.5.0). Optional embeddings / RRF via `DOCDEX_EMBED_CMD` follows in **v0.5.3**.
-See [ROADMAP.md](ROADMAP.md).
+Next: **v0.5.3** — reading a value that sits *before* its label ("Helios Components
+Pvt Ltd **as the Vendor**"), the last form-filling gap; then optional embeddings /
+RRF via `DOCDEX_EMBED_CMD`. See [ROADMAP.md](ROADMAP.md).
+
+## [0.5.2] — 2026-07-30 — "Form filling that understands the words"
+
+Filling a form now works when your documents **don't use the form's wording**. A
+field called `Governing law` reads its value from "governed by the laws of…", and a
+field called `Legal name` reads one from a clause that says `Vendor` — provided you
+declared that synonym. The form benchmark reaches **10 of 11 fields** (from 9) using
+**fewer** tokens than before, 1,433 against 1,595.
+
+### Added
+
+- **A form field finds its value even when the document words it differently.**
+  Until now form fields were matched literally: `Governing law` only ever matched
+  the exact words "governing law", so a contract saying "governed by the laws of
+  Karnataka" gave nothing, and `Legal name` could not use a clause saying `Vendor`
+  even with that synonym declared in `.docdex/aliases.json`. Now the label is looked
+  for in three passes, in this order: **the exact words, then a different word
+  ending, then a synonym you declared.** The exact wording always wins when it is
+  present anywhere, so a synonym can never hijack a field that already matched
+  properly. *In plain terms:* docdex used to need your documents to use the form's
+  exact words; now it can bridge "governed by" and, if you tell it they mean the
+  same thing, "Vendor" and "Legal name".
+- **Anything matched loosely is flagged.** A value read from a synonym or a
+  different word ending is marked **`~approx`** on its own line, so an agent can
+  tell "the document literally said this" from "the document said something I was
+  told means the same thing." An exactly-matched label is never flagged, which is
+  what keeps the flag meaningful.
+- **Disagreements are now spotted across synonyms too.** If one document labels a
+  value `Vendor` and another labels it `Legal name`, they are compared against each
+  other instead of each being treated as its own unchallenged fact. A disagreement
+  hidden is a disagreement the agent states confidently.
+
+### Fixed
+
+- **A label repeated without a value no longer buries the one document that answers
+  you.** If sixty documents say "Payment terms are described in the annexure" and
+  one says "Payment terms are net-45", all sixty-one look equally relevant to a
+  keyword index — so docdex read six of them in alphabetical order and the one with
+  the answer, sixty-first in line, was never opened. It now records for each passage
+  whether it contains an actual number, date, amount or ID, and prefers those
+  passages **when and only when relevance is otherwise a tie**. A passage that is
+  genuinely more relevant is never displaced. *In plain terms:* when docdex can't
+  tell several documents apart, it now reads the ones that actually contain a value
+  first. This closed the benchmark's `Renewal term` miss.
+  - Worth recording: those sixty-one scores were not actually *equal* — they
+    differed in the ninth decimal place, purely from one sentence being slightly
+    longer than another. When a word appears in nearly every document its ranking
+    weight collapses to almost nothing and that jitter is all that is left, so
+    "close enough to be noise" is treated as a tie (`SCORE_GRAIN`). Real matches
+    score in the ones and tens, far above that.
+- **Locating a label is position-safe.** Label matching previously used a plain
+  substring search, which is unsafe once word endings are involved — the stem
+  `govern` would be "found" inside `government`. It now works on real token
+  positions.
+- **A repeated label word no longer skips the value.** If a field's own words
+  appeared again later in the same sentence — "Payment terms: Net-45 and general
+  terms apply" — docdex started reading after the *second* "terms" and returned
+  "apply", losing a value that was right there and correctly labelled. It now reads
+  from the first complete appearance of the label. *(Pre-existing: the old substring
+  search took the last occurrence too. Found by external review of this release.)*
+- **Label precedence now holds across documents, not just within one.** A synonym
+  match in a better-ranked document could outrank a word-ending match in a
+  worse-ranked one, inverting the exact → word-ending → synonym order this release
+  introduced. *(Found by external review.)*
+- **Two synonyms in one sentence take the first, as a reader would.** "Vendor: Acme
+  Corp, Supplier: Beta Ltd" returned Beta; it now returns Acme. *(Found by external
+  review.)*
+- **A synonym can no longer put another field's value into a disagreement.** A
+  declared synonym can match the start of a different field's label ("Vendor" inside
+  "Vendor turnover"), and the conflict check — unlike the answer check — had no guard
+  against that, so one field's number could be logged as another field's and reported
+  as a disagreement that never existed. Both paths now apply the same guard.
+  *(Prompted by external review; the reported case turned out to be already blocked
+  by the clause-boundary rule, but the missing guard was real.)*
+
+### Known gaps (tracked)
+
+- **A value written *before* its label is still not read.** Contracts routinely name
+  a party as "Helios Components Pvt Ltd **as the Vendor**" or "Acme (the
+  **Supplier**)" — the value sits before the label, and docdex only reads what
+  follows one. This is the benchmark's last miss (`Legal name`) and the **v0.5.3**
+  target. It is deliberately not bolted on here: reading backwards without a
+  required connective, a bounded lookback and a clause-boundary stop is exactly the
+  cross-field leakage v0.4.0 fixed — "Payment terms are net-45. Vendor: Acme" would
+  hand `net-45` to `Legal name`.
+- **Values docdex cannot recognise are shown, not asserted.** It types values as
+  numbers, dates, amounts, IDs and emails, so a company name is displayed under
+  "needs follow-up" with the text following its label, rather than stated as a
+  confident answer. Treating any prose after a colon as a value is how a retrieval
+  tool starts being confidently wrong.
+
+### Notes
+
+- The index gains one small field per passage, so **the first `sync` after upgrading
+  rebuilds the lexical index once**. As in v0.5.1 it re-reads the plain-text copies
+  docdex already keeps — nothing is re-extracted from your documents. Until that
+  sync runs, search keeps working and simply doesn't have the new tie-break.
+- 263 tests (13 new), 2 tracked gaps.
+- Reviewed before release by an external cross-family adversarial pass
+  (gemini-3.6-flash-high): 6 findings, all adjudicated against the code — one
+  CRITICAL and two MAJOR confirmed and fixed above, one MAJOR refuted (it
+  assumed single-character label words reach the matcher; they are dropped
+  from the label too, so the case works), and one refuted in its specifics
+  while exposing a real missing guard. Archived in `docdex-qa/v0.5.2/`.
 
 ## [0.5.1] — 2026-07-29 — "Stemming that doesn't lose the answer"
 

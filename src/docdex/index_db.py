@@ -30,14 +30,23 @@ from docdex.config import Project
 from docdex.inventory import read_inventory
 from docdex.search import tokenize
 
-SCHEMA_VERSION = "3"   # v3: dual FTS (porter + unicode61), max-score fusion.
-                       # v1/v2 auto-rebuild on the next sync.
+SCHEMA_VERSION = "4"   # v4: chunks.has_value, a tie-break signal (see _mirror_rows).
+                       # v3: dual FTS (porter + unicode61), max-score fusion.
+                       # Older versions auto-rebuild on the next sync.
 
 # How many rows to pull from each mirror before fusing. Generous enough that a
 # chunk ranked mid-pack in one space still competes, bounded so a corpus-common
 # term can't drag the whole table into memory.
 FUSE_POOL_FACTOR = 5
 FUSE_POOL_MIN = 50
+
+# Relevance differences smaller than this are noise, not signal, and are treated as
+# equal so a more useful tie-break can decide. This is what makes `has_value` work:
+# when a term appears in nearly every document its IDF collapses and every score
+# lands within ~1e-6 of zero, so what remains is length-normalisation jitter — the
+# decoy corpus scored -0.000002472 against the answer's -0.000002216, "beating" it on
+# nothing at all. Real matches score in the ones and tens, far above this grain.
+SCORE_GRAIN = 4
 
 
 def connect(project: Project) -> sqlite3.Connection:
@@ -104,7 +113,8 @@ def _init_schema(conn: sqlite3.Connection, has_fts: bool) -> None:
         CREATE TABLE IF NOT EXISTS chunks(
             chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
             rel TEXT, chunk_index INTEGER, start_offset INTEGER,
-            end_offset INTEGER, tokens INTEGER, text TEXT);
+            end_offset INTEGER, tokens INTEGER, text TEXT,
+            has_value INTEGER DEFAULT 0);
         CREATE INDEX IF NOT EXISTS chunks_rel ON chunks(rel);
         """
     )
@@ -128,6 +138,12 @@ def _init_schema(conn: sqlite3.Connection, has_fts: bool) -> None:
 
 
 def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
+    # Imported here, not at module scope: `context` imports this module, so a
+    # top-level import would be circular. Sharing the ONE pattern matters more than
+    # import tidiness — a second copy of it here would drift from the extractor's,
+    # and then a chunk could be ranked as value-bearing but yield no value.
+    from docdex.context import VALUE_RE as value_re
+
     inventory = read_inventory(project.inventory_path)
     conn = _open_for_build(project, quiet=quiet)
     try:
@@ -188,8 +204,9 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
                     continue
                 conn.execute(
                     "INSERT INTO chunks(rel, chunk_index, start_offset, "
-                    "end_offset, tokens, text) VALUES(?,?,?,?,?,?)",
-                    (rel, idx, start, end, tok.count_tokens(chunk), chunk))
+                    "end_offset, tokens, text, has_value) VALUES(?,?,?,?,?,?,?)",
+                    (rel, idx, start, end, tok.count_tokens(chunk), chunk,
+                     1 if value_re.search(chunk) else 0))
 
         if has_fts and (changed or removed):
             # External-content FTS5: rebuild keeps the mirrors exactly in sync
@@ -233,22 +250,50 @@ def available(project: Project) -> bool:
         conn.close()
 
 
+def _has_value_column(conn) -> bool:
+    """Whether this database carries `chunks.has_value` (schema 4+).
+
+    A schema-3 database still answers queries until its next `sync` rebuilds it, so
+    the ORDER BY has to adapt rather than fail with "no such column".
+    """
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(chunks)")}
+    except sqlite3.Error:
+        return False
+    return "has_value" in cols
+
+
 def _mirror_rows(conn, table: str, match: str, folder: Optional[str],
                  limit: int) -> List[sqlite3.Row]:
-    """Top `limit` rows from one FTS mirror. The (rel, chunk_index) tiebreak makes
-    truncation deterministic even when BM25 ties — which it does en masse once a
-    term matches most of the corpus."""
+    """Top `limit` rows from one FTS mirror.
+
+    Ordering is BM25 first, so genuine relevance always wins. `has_value` and then
+    (rel, chunk_index) only settle **ties** — and BM25 ties happen en masse: when a
+    field's label appears in 61 chunks and only one of them states a value, all 61
+    score identically and the alphabetical tiebreak alone would decide, which is why
+    the one useful chunk could end up ranked 60th and never be read. Preferring a
+    chunk that contains a number, date, amount or ID breaks that tie toward the one
+    that can actually answer, without ever reordering chunks whose relevance differs.
+    """
+    has_col = _has_value_column(conn)
+    value_col = "c.has_value AS has_value" if has_col else "0 AS has_value"
     sql = (
         f"SELECT c.chunk_id AS chunk_id, c.rel AS rel, "
         f"c.chunk_index AS chunk_index, c.text AS text, c.tokens AS tokens, "
-        f"c.start_offset AS start_offset, bm25({table}) AS bm25 "
+        f"c.start_offset AS start_offset, bm25({table}) AS bm25, {value_col} "
         f"FROM {table} JOIN chunks c ON c.chunk_id = {table}.rowid "
         f"WHERE {table} MATCH ?")
     params: list = [match]
     if folder:
         sql += " AND c.rel LIKE ?"
         params.append(f"%{folder}%")
-    sql += " ORDER BY bm25, c.rel, c.chunk_index LIMIT ?"
+    # Bucket by SCORE_GRAIN first so noise-level differences don't decide; within a
+    # bucket prefer a value-bearing chunk, then fall back to the exact score, then to
+    # a stable path order. Chunks whose relevance genuinely differs never reorder.
+    order = (f"ROUND(bm25, {SCORE_GRAIN}), "
+             + ("has_value DESC, " if has_col else "")
+             + "bm25, c.rel, c.chunk_index")
+    sql += f" ORDER BY {order} LIMIT ?"
     params.append(limit)
     return conn.execute(sql, params).fetchall()
 
@@ -303,8 +348,20 @@ def _fuse(mirrors: List[List], limit: int) -> List[dict]:
             prev = best.get(r["chunk_id"])
             if prev is None or score > prev[0]:
                 best[r["chunk_id"]] = (score, r)
-    ordered = sorted(best.values(),
-                     key=lambda p: (-p[0], p[1]["rel"], p[1]["chunk_index"]))
+
+    def key(pair):
+        score, r = pair
+        try:
+            has_value = r["has_value"]
+        except (IndexError, KeyError):
+            has_value = 0               # handmade rows in unit tests
+        # Same ordering as _mirror_rows, or truncation and final rank would
+        # disagree: bucket, then value-bearing, then the exact score at full
+        # precision, then a stable path order.
+        return (-round(score, SCORE_GRAIN), -has_value, -score,
+                r["rel"], r["chunk_index"])
+
+    ordered = sorted(best.values(), key=key)
     return [{
         "rel": r["rel"], "chunk_index": r["chunk_index"], "text": r["text"],
         "tokens": r["tokens"], "start_offset": r["start_offset"],

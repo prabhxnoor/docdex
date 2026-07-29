@@ -150,19 +150,114 @@ def _clauses(text: str) -> List[str]:
     return [p.strip() for p in parts if p and p.strip()]
 
 
-def _label_window(text: str, label_terms: set) -> Optional[str]:
-    """The text right after this field's label — all label tokens must be present
-    (by token, so 'term' ≠ 'terms') — cut before the next label or delimiter, so
-    a dense fragment yields just this field's value region, not the neighbour's."""
-    toks = set(tokenize(text))
-    if not label_terms <= toks:
-        return None
-    low = text.lower()
-    start = max(low.rfind(t) + len(t) for t in label_terms)
-    after = text[start:]
+# Same tokenizer as search.tokenize, but keeping offsets. Positions matter here:
+# `stemmed()` warns not to use stems to locate words because a stem is usually a
+# prefix, so the old `low.rfind(term)` substring search would land mid-word (the
+# stem "govern" found inside "government"). Matching token-by-token with real spans
+# is what makes stem- and synonym-aware label matching position-safe.
+_TOKEN_SPAN_RE = re.compile(r"[^\W_][\w\-]*", re.UNICODE)
+
+
+def _token_spans(text: str) -> List[tuple]:
+    return [(m.group(0).lower(), m.start(), m.end())
+            for m in _TOKEN_SPAN_RE.finditer(text) if len(m.group(0)) >= 2]
+
+
+def _cut_after(text: str, end: int) -> str:
+    """The value region that follows a label, cut before the next label/delimiter."""
+    after = text[end:]
     stop = _STOP.search(after)
     window = after[:stop.start()] if stop else after
     return re.sub(r"^[\s:_\-]+", "", window).strip()
+
+
+def _terms_end(spans: List[tuple], label_terms: set, stemwise: bool) -> Optional[int]:
+    """End offset just past the FIRST complete occurrence of a label, or None.
+
+    `stemwise=False` requires the literal token ('term' != 'terms'); True collapses
+    word endings so a `Governing law` field can match "governed by the laws".
+
+    "First complete" matters: taking the last position of each label token
+    independently (as `max(rfind(...))` did) walks past the value whenever a label
+    word recurs later — "Payment terms: Net-45 and general terms apply" started the
+    window after the SECOND "terms" and returned "apply", dropping a value that was
+    present and correctly labelled.
+    """
+    want = {stem(t) for t in label_terms} if stemwise else set(label_terms)
+    if not want:
+        return None
+    seen: set = set()
+    for tok, _start, end in spans:
+        key = stem(tok) if stemwise else tok
+        if key in want:
+            seen.add(key)
+            if seen >= want:
+                return end          # every label token seen; value follows here
+    return None
+
+
+def _alias_end(spans: List[tuple], label: str, alias_groups) -> Optional[int]:
+    """End offset after a declared SYNONYM of this field's label.
+
+    Phrase-level by necessity: `legal name` maps to `vendor`, so there is no
+    term-by-term correspondence. Only groups that actually contain this field's own
+    label are considered, and a synonym must appear as a contiguous stemmed run —
+    never scattered words that merely co-occur.
+    """
+    label_stems = [stem(t) for t in tokenize(label)]
+    if not label_stems or not alias_groups:
+        return None
+    text_stems = [stem(tok) for tok, _s, _e in spans]
+    best = None
+    for group in alias_groups:
+        phrase_stems = [[stem(t) for t in tokenize(p)] for p in group]
+        if label_stems not in phrase_stems:
+            continue                       # this group is not about this field
+        for ps in phrase_stems:
+            if not ps or ps == label_stems:
+                continue                   # the label itself is the exact path
+            n = len(ps)
+            for i in range(len(text_stems) - n + 1):
+                if text_stems[i:i + n] == ps:
+                    end = spans[i + n - 1][2]
+                    # FIRST occurrence in reading order. Two synonyms of one field in
+                    # one clause is inherently ambiguous ("Vendor: Acme, Supplier:
+                    # Beta"); taking the earliest is what a reader would do, and it
+                    # matches the exact path's first-complete rule.
+                    best = end if best is None else min(best, end)
+    return best
+
+
+# Label-match precedence, defined once and used both inside _field_answer and for
+# the cross-candidate comparison in build_packet.
+_HOW_RANK = {"exact": 0, "stem": 1, "alias": 2}
+
+
+def label_window(text: str, label: str, label_terms: set,
+                 alias_groups=None) -> tuple:
+    """(value region after this field's label, how it was matched).
+
+    Strict precedence — **exact, then word-ending, then declared synonym** — so a
+    literal label always decides when one is present and a synonym can never hijack
+    a field that already matched properly. `how` is one of "exact" / "stem" /
+    "alias"; anything but "exact" is approximate and gets tagged for the agent.
+
+    Returns (None, None) when the label isn't present at all.
+    """
+    spans = _token_spans(text)
+    for stemwise, how in ((False, "exact"), (True, "stem")):
+        end = _terms_end(spans, label_terms, stemwise)
+        if end is not None:
+            return _cut_after(text, end), how
+    end = _alias_end(spans, label, alias_groups)
+    if end is not None:
+        return _cut_after(text, end), "alias"
+    return None, None
+
+
+def _label_window(text: str, label_terms: set) -> Optional[str]:
+    """Exact-only window — kept for callers that must not widen (see label_window)."""
+    return label_window(text, " ".join(sorted(label_terms)), label_terms, None)[0]
 
 
 def _value_lines(text: str, terms: set) -> List[str]:
@@ -230,13 +325,26 @@ def _value_key(value: str):
     return ("txt", re.sub(r"\s+", " ", value).strip().lower())
 
 
-def _field_values(text: str, label_terms: set) -> List[tuple]:
+def _field_values(text: str, label: str, label_terms: set,
+                  alias_groups=None, foreign_terms: set = None) -> List[tuple]:
     """Every (clause, value) where this field's label is present and a value
-    follows it within the label window — never elsewhere in the clause."""
+    follows it within the label window — never elsewhere in the clause.
+
+    Synonym-aware, so two documents that label the same fact differently ("Vendor"
+    vs "Legal name") are compared against each other instead of each being treated
+    as a separate, unchallenged fact — a disagreement hidden is a disagreement the
+    agent asserts confidently.
+    """
     out = []
     for clause in _clauses(text):
-        w = _label_window(clause, label_terms)
+        w, _how = label_window(clause, label, label_terms, alias_groups)
         if not w:
+            continue
+        # Same cross-field guard the answer path applies: a synonym can match the
+        # start of a DIFFERENT field's label ("Vendor" inside "Vendor turnover"), and
+        # logging that neighbour's value here would invent a disagreement this field
+        # never had.
+        if foreign_terms and (foreign_terms & set(tokenize(w))):
             continue
         m = VALUE_RE.search(w)
         if m:
@@ -244,15 +352,23 @@ def _field_values(text: str, label_terms: set) -> List[tuple]:
     return out
 
 
-def _field_answer(text: str, label_terms: set, foreign_terms: set):
-    """This field's own label-local answer: (value, display, clean) or None.
+def _field_answer(text: str, label: str, label_terms: set, foreign_terms: set,
+                  alias_groups=None):
+    """This field's own label-local answer: (value, display, clean, how) or None.
 
     The value comes from the window after the label; `clean` is False when that
     window still names another field (a broad/dense line that didn't split), so
-    the caller can downgrade it to 'weak' instead of asserting it as found."""
-    fallback = None
+    the caller can downgrade it to 'weak' instead of asserting it as found. `how`
+    records whether the label was matched literally or only through a word ending /
+    declared synonym, so an approximate reading is never presented as certain.
+
+    Exact matches are preferred over approximate ones across the whole chunk, not
+    just within a clause: a literal label anywhere must beat a synonym elsewhere.
+    """
+    best = None                     # (rank, value, display, clean, how)
+    rank = _HOW_RANK
     for clause in _clauses(text):
-        w = _label_window(clause, label_terms)
+        w, how = label_window(clause, label, label_terms, alias_groups)
         if not w:
             continue
         m = VALUE_RE.search(w)
@@ -261,10 +377,13 @@ def _field_answer(text: str, label_terms: set, foreign_terms: set):
         value = re.sub(r"\s+", " ", m.group(0)).strip()
         display = _trim(w, 160)
         clean = not (foreign_terms & set(tokenize(w)))
-        if clean:
-            return (value, display, clean)
-        fallback = fallback or (value, display, clean)
-    return fallback
+        # Prefer a literal label, then a clean window, then first seen.
+        key = (rank[how], 0 if clean else 1)
+        if best is None or key < best[0]:
+            best = (key, value, display, clean, how)
+        if key == (0, 0):
+            break                   # exact label, clean window — nothing can beat it
+    return None if best is None else (best[1], best[2], best[3], best[4])
 
 
 def _content_terms(task: str) -> List[str]:
@@ -453,27 +572,43 @@ def build_packet(project: Project, task: str, budget: int = 3000,
             # that yields a *clean* (single-field) value over a broad/dense line.
             ans, ans_hit = None, best
             for h in [best] + [x for x in fhits if x is not best]:
-                cand = _field_answer(h["text"], label_terms, foreign)
+                cand = _field_answer(h["text"], label, label_terms, foreign,
+                                     alias_groups)
                 if cand:
-                    ans, ans_hit = cand, h
-                    if cand[2]:                  # clean → take it
+                    # Precedence must hold ACROSS candidates, not just within one:
+                    # comparing only against "exact" let an alias match in a better
+                    # chunk outrank a stem match in a worse one, inverting the
+                    # documented exact → stem → alias order.
+                    if ans is None or _HOW_RANK[cand[3]] < _HOW_RANK[ans[3]]:
+                        ans, ans_hit = cand, h
+                    if cand[2] and cand[3] == "exact":
                         break
             if ans is None:
-                # matched the label but no clean value — show the label-local
+                # matched the label but no recognisable value — show the label-local
                 # text, not a broad snippet that could include a neighbour's value.
-                w = _label_window(best["text"], label_terms)
+                # The window is tiered too, so a field labelled by a synonym still
+                # shows ITS OWN value region rather than the whole sentence. Values
+                # docdex cannot type-recognise (a company name has no digits) land
+                # here by design: shown for the agent to read, never asserted.
+                w, how = None, None
+                for h in [best] + [x for x in fhits if x is not best]:
+                    w, how = label_window(h["text"], label, label_terms, alias_groups)
+                    if w:
+                        best = h
+                        break
                 line = _trim(w, 160) if w else snippet(
                     best["text"], label, sorted(label_terms), width=160)
-                resolved.append({"label": label, "has_value": False,
-                                 "line": line, "hit": best})
+                resolved.append({"label": label, "has_value": False, "line": line,
+                                 "hit": best, "approx": bool(how) and how != "exact"})
             else:
-                _value, display, clean = ans
-                resolved.append({"label": label, "has_value": clean,
-                                 "line": display, "hit": ans_hit})
+                _value, display, clean, how = ans
+                resolved.append({"label": label, "has_value": clean, "line": display,
+                                 "hit": ans_hit, "approx": how != "exact"})
             pool.append(ans_hit)
             pinned.add((ans_hit["rel"], ans_hit["chunk"]))
             for h in fhits:                # conflicting values for THIS field only
-                for clause, val in _field_values(h["text"], label_terms):
+                for clause, val in _field_values(h["text"], label, label_terms,
+                                                 alias_groups, foreign):
                     conflict_items.append((label, val, h["rel"], clause))
 
     missing_fields = [r["label"] for r in resolved if r["hit"] is None]
@@ -587,8 +722,10 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     answer_block = []
     if form_fields:
         for r in packed_found:
+            atag = "  ~approx" if r.get("approx") else ""
             answer_block.append(
-                f"- {r['label']}: {r['line']}  [{r['hit']['rel']} ·{r['hit']['chunk']}]")
+                f"- {r['label']}: {r['line']}  "
+                f"[{r['hit']['rel']} ·{r['hit']['chunk']}]{atag}")
     else:
         for line, source, approx in answers:
             atag = "  ~approx" if approx else ""
@@ -599,8 +736,9 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     if packed_weak:
         out.append("## Needs follow-up (weak)")
         for r in packed_weak:
+            atag = "  ~approx" if r.get("approx") else ""
             out.append(f"- {r['label']}: matched, no clear value — {r['line']}  "
-                       f"[{r['hit']['rel']} ·{r['hit']['chunk']}]")
+                       f"[{r['hit']['rel']} ·{r['hit']['chunk']}]{atag}")
         out.append("")
 
     if conflicts:
