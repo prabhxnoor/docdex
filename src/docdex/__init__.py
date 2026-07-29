@@ -1,3 +1,3 @@
 """docdex — token-efficient local document index for LLM workflows."""
 
-__version__ = "0.5.2"
+__version__ = "0.5.3"

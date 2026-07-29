@@ -70,7 +70,11 @@ class TestStateOutsideProject:
         assert not config.is_within(p.state_dir, root)
         assert config.is_within(p.state_dir, cache)
         assert p.cache_dir == cache / project_cache_id(root)
-        assert p.state_dir == p.cache_dir / "_state"
+        # Named via the constant, not a literal: the point of this test is
+        # WHERE state lives, not what the directory is called. The name
+        # gained a `.noindex` suffix in v0.5.3 to keep extracted document
+        # text out of Spotlight.
+        assert p.state_dir == p.cache_dir / config.STATE_DIR
 
     def test_all_derived_state_paths_follow(self, tmp_path):
         p = Project.create(_root(tmp_path))
@@ -130,7 +134,7 @@ class TestLegacyV1BackCompat:
         root = tmp_path / "legacyproj"
         self._make_legacy(root)
         p = Project.load(root)
-        assert p.state_dir == root / "_index" / "_state"
+        assert p.state_dir == root / "_index" / config.STATE_DIR
         assert config.is_within(p.state_dir, root)
 
     def test_discover_finds_legacy_from_subdir(self, tmp_path):

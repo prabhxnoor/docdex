@@ -29,7 +29,20 @@ CONFIG_NAME = "config.json"              # v2: marker/config inside the home
 SECRETS_NAME = "secrets.json"            # v2: PDF passwords inside the home
 ALIASES_NAME = "aliases.json"            # v2: user synonym map inside the home
 LEGACY_SECRETS_NAME = ".docdex.secrets.json"   # v1: at the project root
-STATE_DIR = "_state"
+# The `.noindex` suffix is what keeps extracted document text out of OS desktop
+# search, and it is deliberately part of the directory NAME rather than a marker
+# file inside it. Measured on macOS 26.5: a `.noindex` directory and a dot-prefixed
+# directory are both skipped by Spotlight, while an empty `.metadata_never_index`
+# marker — the widely-cited trick — does NOT work for a subdirectory; a file beside
+# it was indexed anyway.
+#
+# Naming it this way protects state wherever it lives. The v2 cache sits under a
+# hidden `~/.cache`, so it was already safe by luck; the v1 layout kept state in a
+# VISIBLE `_index/_state/extracted` inside the project, and that is what put the full
+# text of documents into Spotlight. A `DOCDEX_CACHE_DIR` pointed anywhere visible has
+# the same problem. The suffix removes the dependency on where state happens to live.
+STATE_DIR = "_state.noindex"
+LEGACY_STATE_DIRS = ("_state",)          # renamed into place on the next sync
 UPDATE_DIR = "Update"
 NOTES_DIR = "vision_notes"
 META_NAME = "meta.json"                  # external cache: records its project root
@@ -80,6 +93,59 @@ def cache_base() -> Path:
     if xdg:
         return Path(xdg).expanduser() / "docdex"
     return Path.home() / ".cache" / "docdex"
+
+
+def is_hidden_from_desktop_search(path: Path) -> bool:
+    """Whether the OS desktop indexer will skip this path.
+
+    True when any component is dot-prefixed or carries the `.noindex` suffix — the
+    two mechanisms measured to work on macOS (see STATE_DIR). Used by the tests and
+    by `docdex doctor` to assert the guarantee structurally, instead of querying
+    Spotlight, which takes tens of seconds to settle.
+    """
+    for part in path.parts:
+        # `.` and `..` start with a dot but hide nothing — counting them made
+        # `../_state` report itself as protected, which is worse than no check.
+        if part in ("/", "", ".", ".."):
+            continue
+        if part.startswith(".") or part.endswith(".noindex"):
+            return True
+    return False
+
+
+def migrate_state_dir_name(project: "Project") -> Optional[str]:
+    """Move a pre-`.noindex` state directory into place. Returns the old name if moved.
+
+    A **rename**, not a rebuild: it is instant and lossless, where re-extracting a
+    10k-document corpus would be neither. If both names somehow exist, the current
+    one wins and the stale directory is left for the operator rather than silently
+    overwriting live state.
+    """
+    target = project.state_dir
+    for old_name in LEGACY_STATE_DIRS:
+        old = target.parent / old_name
+        if not old.is_dir() or old == target:
+            continue
+        if target.exists():
+            # Live state already present. Deliberately NOT merged: guessing which
+            # copy is authoritative risks losing real state. `docdex doctor` reports
+            # the leftover so it is visible rather than silently orphaned.
+            return None
+        try:
+            old.rename(target)
+            return old_name
+        except OSError as err:
+            # Never swallow this. Falling through would `mkdir` a fresh EMPTY state
+            # directory, so docdex would answer "no results" for documents whose
+            # extracted text is sitting right there in `old` — while `old` stays
+            # exposed to desktop search. Silent degradation is the exact failure this
+            # project refuses to ship.
+            raise ConfigError(
+                f"could not move state into a non-indexed directory: "
+                f"{old.name} -> {target.name} failed ({err}). Refusing to continue "
+                f"with an empty index. Move it by hand and re-run: "
+                f"mv {old} {target}") from err
+    return None
 
 
 def project_cache_id(root: Path) -> str:
@@ -456,6 +522,9 @@ def ensure_state_dirs(project: Project) -> None:
             raise ConfigError(serr)
     for d in (project.index_dir, project.update_dir, project.notes_dir):
         d.mkdir(parents=True, exist_ok=True)
+    # Carry an existing pre-`.noindex` state directory over BEFORE creating dirs, or
+    # the mkdir below would make an empty one and orphan the extracted text.
+    migrate_state_dir_name(project)
     for d in (project.state_dir, project.extracted_dir, project.dumps_dir,
               project.vision_dir):
         d.mkdir(parents=True, exist_ok=True)

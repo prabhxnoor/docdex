@@ -7,7 +7,8 @@ from typing import List, Tuple
 from docdex import extract as ex
 from docdex import search as searchmod
 from docdex import semantic, vision
-from docdex.config import Project
+from docdex.config import (LEGACY_STATE_DIRS, Project,
+                           is_hidden_from_desktop_search)
 from docdex.inventory import HEADER, read_extract_status, read_inventory, sha1_of
 from docdex.sync import run_sync
 
@@ -28,6 +29,30 @@ class Doctor:
                    if not d.is_dir()]
         self.record("layout", not missing,
                     "all dirs present" if not missing else f"missing: {missing}")
+
+    def check_hidden_from_desktop_search(self) -> None:
+        """Is docdex's extracted text out of reach of Spotlight / Finder search?
+
+        docdex writes a plain-text copy of every document it extracts. In a location
+        the OS indexes, that makes the full text of private documents searchable and
+        puts it in the Spotlight store — and returns docdex's copy instead of the
+        real file. The state directory's `.noindex` suffix prevents it; this reports
+        whether that actually holds for your layout.
+        """
+        p = self.project
+        exposed = [str(d) for d in (p.state_dir, p.extracted_dir, p.dumps_dir,
+                                    p.vision_dir)
+                   if d.is_dir() and not is_hidden_from_desktop_search(d)]
+        # A state directory from before the `.noindex` rename, still on disk because
+        # sync has not run or the rename could not complete. Checking only the NEW
+        # paths reported "not indexed" while the old one sat beside them holding the
+        # same document text, fully indexed — reassurance that was simply false.
+        exposed += [str(p.state_dir.parent / old) for old in LEGACY_STATE_DIRS
+                    if (p.state_dir.parent / old).is_dir()]
+        self.record("hidden from desktop search", not exposed,
+                    "extracted text is not indexed by Spotlight" if not exposed
+                    else f"EXPOSED to Spotlight: {exposed} — run `docdex sync` to "
+                         f"move state into a .noindex directory")
 
     def check_inventory_schema(self) -> bool:
         path = self.project.inventory_path
@@ -143,6 +168,7 @@ def run_doctor(project: Project, no_sha: bool = False, e2e: bool = False) -> int
     d = Doctor(project)
     print(f"docdex doctor — {project.root}")
     d.check_layout()
+    d.check_hidden_from_desktop_search()
     if d.check_inventory_schema():
         d.check_rows_on_disk(no_sha)
         d.check_cache_coverage()

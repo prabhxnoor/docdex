@@ -6,7 +6,14 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-07-30 (SHIPPED **v0.5.2 "Form filling that understands the
+> _Last updated: 2026-07-30 (SHIPPED **v0.5.3 "Out of Spotlight"** — docdex's
+> plain-text copies of your documents no longer appear in Spotlight/Finder search.
+> User-reported; a privacy bug, not clutter. The state dir is now named
+> `_state.noindex`, the only mechanism measured to work — the widely-cited
+> `.metadata_never_index` marker does NOT. 270 tests. Also added the standard release
+> process: `docs/RELEASING.md`, `benchmarks/review_kit.py`, and a preflight gate.)_
+>
+> _Previously: 2026-07-30 (SHIPPED **v0.5.2 "Form filling that understands the
 > words"** — form fields now read a value from a label written as a different
 > inflection or a declared synonym, in strict exact→stem→synonym precedence, with
 > anything non-literal tagged `~approx`; and a value-bearing chunk can no longer be
@@ -142,6 +149,21 @@ foundation is solid enough to build them safely.
   guarantees. 226 tests. **The 5th M1 piece — optional embeddings/RRF — is deferred
   to v0.5.1** (off by default anyway); synonym-aware *form-field* value-extraction
   + conflict is deferred to a later pass.
+- **v0.5.3 — "Out of Spotlight"** (2026-07-30): user-reported bug — docdex's
+  extracted `.txt` copies appeared in Spotlight and Finder search. A privacy defect,
+  not clutter: docdex writes a plain-text copy of every document it reads, so in an
+  indexed location the full text of confidential files became searchable and entered
+  the Spotlight store, and a search returned docdex's copy instead of the real file.
+  Fixed by naming the state directory `_state.noindex`. **The obvious fix does not
+  work:** measured on macOS 26.5, an empty `.metadata_never_index` marker inside a
+  directory leaves a neighbouring file indexed; only a dot-prefixed or `.noindex`
+  directory NAME is skipped. Naming it removes the dependency on where state lives —
+  the v2 cache under hidden `~/.cache` was already safe by luck (17,317 files absent
+  from the index for that reason alone), while the pre-v0.4.1 in-project `_index/`
+  layout was fully exposed (164 files, all 164 indexed, 149 returned by a content
+  search). Migration is a lossless rename, not a re-extraction. `docdex doctor` now
+  reports the guarantee. Also standardised the release process itself
+  ([`docs/RELEASING.md`](docs/RELEASING.md), `benchmarks/review_kit.py`, gate 0).
 - **v0.5.2 — "Form filling that understands the words"** (2026-07-30): closed the
   two form-field pieces deferred since v0.5.0. A field's label is now located in
   strict precedence — **exact words → different word ending → declared synonym** — so
@@ -303,15 +325,15 @@ are what remain, and they are **v0.5.2 ← next**.
   label present anywhere always decides.
 - ⬜ **Apposition: a value written BEFORE its label** — "Helios Components Pvt Ltd
   **as the Vendor**", "Acme (the **Supplier**)". The standard way contracts name a
-  party, and the benchmark's last miss (`Legal name`). **→ v0.5.3.** Needs a required
+  party, and the benchmark's last miss (`Legal name`). **→ v0.5.4.** Needs a required
   connective, a bounded lookback and a clause-boundary stop: unbounded backwards
   reading is the DDX-029 cross-field leakage class ("Payment terms are net-45.
   Vendor: Acme" would hand `net-45` to `Legal name`), so it gets its own change and
   its own review rather than riding along with something else.
 - ⬜ **Optional embeddings / RRF** via `DOCDEX_EMBED_CMD` (local-only) for pure
   paraphrase and folder discovery — exact IDs, amounts, dates, and missing-evidence
-  honesty stay lexical/structured. **→ v0.5.4** (was v0.5.1, which the precision fix
-  took, then v0.5.3, which apposition takes); off by default, needs a local embedder. Note v0.5.1 already built the
+  honesty stay lexical/structured. **→ v0.5.5** (was v0.5.1, which the precision fix took,
+  then pushed twice more by the Spotlight fix and apposition); off by default, needs a local embedder. Note v0.5.1 already built the
   two-ranking fusion plumbing this will extend — a vector ranking becomes a third
   input to the same merge.
 - ✅ **Conflict v2** — recency/authority weighting on top of Phase 3's grouping,
@@ -557,7 +579,7 @@ master index goes stale — an on-demand rebuild fixes that.
 - **Form-field** matching is meaning-aware since v0.5.2 — a field reads its value
   from a label written as a different inflection or a declared synonym, tagged
   `~approx`. The remaining gap is a value written **before** its label ("… as the
-  Vendor"), which is the benchmark's last miss and **v0.5.3**.
+  Vendor"), which is the benchmark's last miss and **v0.5.4**.
 - **Values are typed** — numbers, dates, amounts, IDs, emails. A value docdex cannot
   type (a company name) is shown under "needs follow-up" with the text following its
   label, never asserted as a confident answer.

@@ -10,9 +10,55 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Next: **v0.5.3** — reading a value that sits *before* its label ("Helios Components
+Next: **v0.5.4** — reading a value that sits *before* its label ("Helios Components
 Pvt Ltd **as the Vendor**"), the last form-filling gap; then optional embeddings /
 RRF via `DOCDEX_EMBED_CMD`. See [ROADMAP.md](ROADMAP.md).
+
+## [0.5.3] — 2026-07-30 — "Out of Spotlight"
+
+**docdex's copies of your documents no longer show up in Spotlight or Finder search.**
+Reported as a bug, and it was a privacy one, not just clutter.
+
+### Fixed
+
+- **The extracted text of your documents is no longer searchable by the OS.** To
+  search a folder cheaply, docdex saves a **plain-text copy of every document it
+  reads** — including PDFs and Word files whose contents macOS previously could not
+  see inside. Where those copies sat in a place the system indexes, two things went
+  wrong: searching a phrase from a contract returned *docdex's copy* instead of the
+  real document, and the full text of private documents became searchable and was
+  stored in the system's search index. *In plain terms:* docdex was quietly making
+  the inside of your confidential files searchable to anything on the Mac. It now
+  keeps that text in a directory the OS is told to skip.
+  - **Your own documents are unaffected and stay searchable.** The change only ever
+    applies to docdex's own storage. Making your real files unfindable would be a
+    worse bug than this one.
+  - **Nothing is re-read from your documents.** The upgrade *renames* one directory,
+    which is instant, rather than re-extracting your corpus.
+  - Measured before and after on a folder the system does index: the original
+    document is still found, docdex's copy is not.
+
+### Notes
+
+- **What actually works, because the popular answer doesn't.** The widely-cited fix
+  is an empty `.metadata_never_index` file inside the directory. Measured on macOS
+  26.5, that **does not work** — a file next to it was indexed anyway. What does work
+  is the directory's own name: a name starting with `.` or ending in `.noindex` is
+  skipped. So the protection is in the name (`_state.noindex`), which holds no matter
+  where the directory lives.
+- **Why it had not been noticed.** The current layout keeps this text under
+  `~/.cache/docdex/`, and `~/.cache` starts with a dot, so it was already being
+  skipped — by luck, not design. On this machine 17,317 cached files were absent from
+  the search index for that reason alone. The older layout (before v0.4.1) kept the
+  same text in a plainly-visible folder *inside* the project, and there it was fully
+  exposed: 164 such files were all 164 in the index, with a content search returning
+  149 of them. Anyone still on that layout, or pointing `DOCDEX_CACHE_DIR` at a
+  normal folder, was exposed. The fix no longer depends on luck.
+- **`docdex doctor` now tells you.** A new line reports whether your extracted text
+  is actually hidden from desktop search, so you can confirm it rather than trust it.
+- Already-indexed copies from before this fix are not retroactively removed from the
+  system's index; `docdex purge --state-only` followed by `docdex sync` clears them.
+- 270 tests (8 new).
 
 ## [0.5.2] — 2026-07-30 — "Form filling that understands the words"
 

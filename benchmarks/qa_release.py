@@ -2,9 +2,14 @@
 
 Run before tagging:  python3 benchmarks/qa_release.py --base v0.5.0
 
-Five gates, all of which must pass. Gate 3 is the unusual one and the reason this
+Six gates, all of which must pass. Gate 3 is the unusual one and the reason this
 script exists.
 
+  0. RELEASE STANDARDS  the parts of docs/RELEASING.md a machine can check: version
+                        bumped, a CHANGELOG section and ROADMAP mention for this
+                        version, a QA archive folder with an adjudication, and this
+                        release recorded in the benchmark history. A stale document
+                        is a defect, so the gate refuses to let one through.
   1. GREEN ON HEAD      full suite passes: zero failures, zero collection errors,
                         pytest exit 0, and a positive test count.
   2. NO REGRESSION      the form benchmark is compared to the base release PER
@@ -39,6 +44,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+QA_ARCHIVE = REPO.parent / "docdex-qa"
 BENCH_JSON = Path("benchmarks") / "results_task.json"
 TOKEN_CEILING_RATIO = 1.25      # packet may not balloon vs the base release
 
@@ -48,6 +54,14 @@ def run(cmd: list, cwd: Path, env: dict = None) -> subprocess.CompletedProcess:
     if env:
         e.update(env)
     return subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, env=e)
+
+
+def version_of(tree: Path) -> str:
+    for ln in (tree / "src" / "docdex" / "__init__.py").read_text(
+            encoding="utf-8").splitlines():
+        if ln.startswith("__version__"):
+            return ln.split("=", 1)[1].strip().strip('"\'')
+    return "?"
 
 
 def pytest_run(tree: Path, targets: list = None, env: dict = None) -> dict:
@@ -128,8 +142,34 @@ def main() -> int:
     print(f"QA gate: working tree at {head_sha} vs {args.base}")
     print("=" * 68)
 
+    # ------------------------------------------------------- gate 0: preflight
+    # The release standards a machine can check. See docs/RELEASING.md.
+    print("\n[0/6] release standards")
+    version = version_of(REPO)
+    base_version = run(["git", "show", f"{args.base}:src/docdex/__init__.py"],
+                       REPO).stdout
+    base_v = next((ln.split("=", 1)[1].strip().strip('"\'')
+                   for ln in base_version.splitlines()
+                   if ln.startswith("__version__")), "?")
+    checks = [
+        (f"version bumped ({base_v} -> {version})", version != base_v and version != "?"),
+        (f"CHANGELOG has a [{version}] section",
+         f"## [{version}]" in (REPO / "CHANGELOG.md").read_text(encoding="utf-8")),
+        (f"ROADMAP mentions v{version}",
+         f"v{version}" in (REPO / "ROADMAP.md").read_text(encoding="utf-8")),
+        ("QA archive folder exists with an adjudication",
+         (QA_ARCHIVE / f"v{version}" / "ADJUDICATION.md").exists()),
+        (f"this release is recorded in benchmarks/HISTORY.json",
+         f'"v{version}"' in (REPO / "benchmarks" / "HISTORY.json").read_text(
+             encoding="utf-8")),
+    ]
+    for label, ok in checks:
+        print(f"      {'OK  ' if ok else 'MISS'} {label}")
+        if not ok:
+            failures.append(f"release standard not met: {label}")
+
     # ---------------------------------------------------- gate 1: green on HEAD
-    print("\n[1/5] full suite on HEAD")
+    print("\n[1/6] full suite on HEAD")
     rep = pytest_run(REPO)
     summary = next((ln.strip() for ln in reversed(rep["stdout"].splitlines())
                     if " passed" in ln or " failed" in ln or " error" in ln), "")
@@ -155,7 +195,7 @@ def main() -> int:
     shutil.copytree(REPO / "benchmarks", base_tree / "benchmarks")
 
     # ------------------------------------------ gate 2: per-field, not headline
-    print(f"\n[2/5] benchmarks vs {args.base} — every suite, per case")
+    print(f"\n[2/6] benchmarks vs {args.base} — every suite, per case")
     # Suite A (single-fact retrieval) is compared per method here too. It was
     # historically only recorded at v0.1.1, which is how a five-release blind spot
     # opened up; `bench_all.py` owns the measurement so both tools agree.
@@ -228,7 +268,7 @@ def main() -> int:
         print("      OK — nothing regressed")
 
     # ---------------------------------- gate 3: do the release's tests discriminate?
-    print(f"\n[3/5] release's new tests must FAIL on {args.base}")
+    print(f"\n[3/6] release's new tests must FAIL on {args.base}")
     diff = run(["git", "diff", "--name-only", args.base, "--", "tests/"], REPO)
     changed = [p for p in diff.stdout.split() if p.endswith(".py")]
     untracked = run(["git", "ls-files", "-o", "--exclude-standard", "tests/"], REPO)
@@ -259,7 +299,7 @@ def main() -> int:
             print(f"      OK — {len(rep['assertion'])} assertion(s) catch base behaviour")
 
     # -------------------------------------------------- gate 4: determinism
-    print("\n[4/5] determinism on HEAD")
+    print("\n[4/6] determinism on HEAD")
     h1 = bench(REPO, seed="0", cache=work / "d1")["results"][key]["packet_sha256"]
     h2 = bench(REPO, seed="0", cache=work / "d2")["results"][key]["packet_sha256"]
     h3 = bench(REPO, seed="524287", cache=work / "d3")["results"][key]["packet_sha256"]
@@ -276,7 +316,7 @@ def main() -> int:
         run(["git", "worktree", "remove", "--force", str(base_tree)], REPO)
 
     # ------------------------------------------------- gate 5: honest verdict
-    print("\n[5/5] what was verified")
+    print("\n[5/6] what was verified")
     print(f"      commit:      {head_sha}")
     print(f"      working tree: {'DIRTY — ' + str(len(dirty)) + ' uncommitted path(s)' if dirty else 'clean'}")
     if dirty:
