@@ -2,105 +2,105 @@
 
 Corpus: **162 files** (1.92 MB raw, ~54,150 tokens of text), 12 planted facts behind misleading filenames. Deterministic (seed 42) — regenerate and rerun with `python3 benchmarks/run_benchmark.py`.
 
-One-time indexing: sync 4.0s + semantic build 0.9s; index on disk 1.03 MB. Environment: Python 3.9.6, macOS-26.5-arm64-arm-64bit. Token counts are a chars/4 approximation.
+One-time indexing: sync 0.7s + semantic build 0.2s; index on disk 1.53 MB. Environment: Python 3.9.6, macOS-26.5.2-arm64-arm-64bit. Token counts are a chars/4 approximation.
 
 | method | right file ranked #1 | in top 3 | answer reached | median tokens to answer | median ms |
 |---|---|---|---|---|---|
 | browse by filename (no docdex) | 0/12 | 0/12 | 0/12 | 976 | 0 |
-| raw `grep -ril` (no docdex) | 0/12 | 0/12 | 0/12 | 1,017 | 259 |
-| read everything (no docdex) | 12/12 | 12/12 | 12/12 | 28,312 | 158 |
-| **`docdex search`** (exact-ish query) | 12/12 | 12/12 | 12/12 | 780 | 646 |
-| `docdex semantic` (exact-ish query) | 4/12 | 5/12 | 4/12 | 694 | 155 |
-| `docdex search` (fuzzy/paraphrased query) | 7/12 | 8/12 | 7/12 | 786 | 553 |
-| **`docdex semantic`** (fuzzy query) | 0/12 | 0/12 | 0/12 | 803 | 157 |
+| raw `grep -ril` (no docdex) | 0/12 | 0/12 | 0/12 | 1,017 | 197 |
+| read everything (no docdex) | 12/12 | 12/12 | 12/12 | 28,312 | 6 |
+| **`docdex search`** (exact-ish query) | 12/12 | 12/12 | 12/12 | 728 | 35 |
+| `docdex semantic` (exact-ish query) | 4/12 | 5/12 | 4/12 | 694 | 41 |
+| `docdex search` (fuzzy/paraphrased query) | 4/12 | 8/12 | 5/12 | 363 | 34 |
+| **`docdex semantic`** (fuzzy query) | 0/12 | 0/12 | 0/12 | 609 | 41 |
 
-Headline: to reach an answer, `docdex search` needs a median of **780 tokens** vs **28,312** for the read-everything fallback — **36× less context** per question, after a one-time 4.0s indexing cost. Filename browsing and raw grep are structurally blind to Office/PDF content and fail on most questions.
+Headline: to reach an answer, `docdex search` needs a median of **728 tokens** vs **28,312** for the read-everything fallback — **39× less context** per question, after a one-time 0.7s indexing cost. Filename browsing and raw grep are structurally blind to Office/PDF content and fail on most questions.
 
 ## Per-question detail
 
 | case | method | hit@1 | hit@3 | answered | tokens | ms |
 |---|---|---|---|---|---|---|
 | Q01 | filename | - | - | - | 976 | 0 |
-| Q01 | rawgrep | - | - | - | 1,017 | 258 |
-| Q01 | readall | Y | Y | Y | 42,660 | 402 |
-| Q01 | docdex | Y | Y | Y | 810 | 797 |
-| Q01 | docdex-sem-x | - | Y | - | 893 | 161 |
-| Q01 | docdex-fuz | - | Y | - | 887 | 728 |
-| Q01 | docdex-sem | - | - | - | 897 | 194 |
+| Q01 | rawgrep | - | - | - | 1,017 | 236 |
+| Q01 | readall | Y | Y | Y | 42,660 | 9 |
+| Q01 | docdex | Y | Y | Y | 758 | 35 |
+| Q01 | docdex-sem-x | - | Y | - | 893 | 42 |
+| Q01 | docdex-fuz | Y | Y | Y | 599 | 34 |
+| Q01 | docdex-sem | - | - | - | 0 | 40 |
 | Q02 | filename | - | - | - | 976 | 0 |
-| Q02 | rawgrep | - | - | - | 1,017 | 253 |
-| Q02 | readall | Y | Y | Y | 128 | 2 |
-| Q02 | docdex | Y | Y | Y | 303 | 771 |
-| Q02 | docdex-sem-x | Y | Y | Y | 375 | 144 |
-| Q02 | docdex-fuz | - | - | - | 817 | 742 |
-| Q02 | docdex-sem | - | - | - | 610 | 159 |
+| Q02 | rawgrep | - | - | - | 1,017 | 191 |
+| Q02 | readall | Y | Y | Y | 128 | 0 |
+| Q02 | docdex | Y | Y | Y | 243 | 35 |
+| Q02 | docdex-sem-x | Y | Y | Y | 375 | 41 |
+| Q02 | docdex-fuz | - | - | - | 796 | 35 |
+| Q02 | docdex-sem | - | - | - | 610 | 41 |
 | Q03 | filename | - | - | - | 1,973 | 0 |
-| Q03 | rawgrep | - | - | - | 1,017 | 214 |
-| Q03 | readall | Y | Y | Y | 50,023 | 595 |
-| Q03 | docdex | Y | Y | Y | 902 | 710 |
-| Q03 | docdex-sem-x | - | - | - | 673 | 196 |
-| Q03 | docdex-fuz | Y | Y | Y | 920 | 590 |
-| Q03 | docdex-sem | - | - | - | 920 | 202 |
+| Q03 | rawgrep | - | - | - | 1,017 | 193 |
+| Q03 | readall | Y | Y | Y | 50,023 | 11 |
+| Q03 | docdex | Y | Y | Y | 849 | 36 |
+| Q03 | docdex-sem-x | - | - | - | 673 | 40 |
+| Q03 | docdex-fuz | Y | Y | Y | 771 | 34 |
+| Q03 | docdex-sem | - | - | - | 814 | 41 |
 | Q04 | filename | - | - | - | 976 | 0 |
-| Q04 | rawgrep | - | - | - | 1,017 | 335 |
-| Q04 | readall | Y | Y | Y | 33,235 | 297 |
-| Q04 | docdex | Y | Y | Y | 717 | 757 |
-| Q04 | docdex-sem-x | - | - | - | 716 | 154 |
-| Q04 | docdex-fuz | Y | Y | Y | 707 | 663 |
-| Q04 | docdex-sem | - | - | - | 884 | 154 |
+| Q04 | rawgrep | - | - | - | 1,017 | 197 |
+| Q04 | readall | Y | Y | Y | 33,235 | 7 |
+| Q04 | docdex | Y | Y | Y | 661 | 35 |
+| Q04 | docdex-sem-x | - | - | - | 716 | 42 |
+| Q04 | docdex-fuz | Y | Y | Y | 662 | 34 |
+| Q04 | docdex-sem | - | - | - | 884 | 41 |
 | Q05 | filename | - | - | - | 976 | 0 |
-| Q05 | rawgrep | - | - | - | 1,017 | 277 |
-| Q05 | readall | Y | Y | Y | 9,742 | 117 |
-| Q05 | docdex | Y | Y | Y | 872 | 661 |
-| Q05 | docdex-sem-x | - | - | - | 921 | 185 |
-| Q05 | docdex-fuz | Y | Y | Y | 286 | 517 |
-| Q05 | docdex-sem | - | - | - | 859 | 162 |
+| Q05 | rawgrep | - | - | - | 1,017 | 234 |
+| Q05 | readall | Y | Y | Y | 9,742 | 2 |
+| Q05 | docdex | Y | Y | Y | 820 | 35 |
+| Q05 | docdex-sem-x | - | - | - | 921 | 41 |
+| Q05 | docdex-fuz | Y | Y | Y | 235 | 35 |
+| Q05 | docdex-sem | - | - | - | 801 | 41 |
 | Q06 | filename | - | - | - | 976 | 0 |
-| Q06 | rawgrep | - | - | - | 1,017 | 233 |
-| Q06 | readall | Y | Y | Y | 25,328 | 256 |
-| Q06 | docdex | Y | Y | Y | 424 | 682 |
-| Q06 | docdex-sem-x | Y | Y | Y | 423 | 143 |
-| Q06 | docdex-fuz | - | - | - | 896 | 632 |
-| Q06 | docdex-sem | - | - | - | 609 | 137 |
+| Q06 | rawgrep | - | - | - | 1,017 | 194 |
+| Q06 | readall | Y | Y | Y | 25,328 | 5 |
+| Q06 | docdex | Y | Y | Y | 368 | 35 |
+| Q06 | docdex-sem-x | Y | Y | Y | 423 | 40 |
+| Q06 | docdex-fuz | - | Y | - | 435 | 34 |
+| Q06 | docdex-sem | - | - | - | 609 | 42 |
 | Q07 | filename | - | - | - | 976 | 0 |
-| Q07 | rawgrep | - | - | - | 0 | 220 |
-| Q07 | readall | Y | Y | Y | 51,845 | 548 |
-| Q07 | docdex | Y | Y | Y | 102 | 631 |
-| Q07 | docdex-sem-x | Y | Y | Y | 380 | 133 |
-| Q07 | docdex-fuz | Y | Y | Y | 308 | 591 |
-| Q07 | docdex-sem | - | - | - | 828 | 121 |
+| Q07 | rawgrep | - | - | - | 0 | 193 |
+| Q07 | readall | Y | Y | Y | 51,845 | 11 |
+| Q07 | docdex | Y | Y | Y | 241 | 35 |
+| Q07 | docdex-sem-x | Y | Y | Y | 143 | 39 |
+| Q07 | docdex-fuz | - | Y | Y | 218 | 34 |
+| Q07 | docdex-sem | - | - | - | 828 | 40 |
 | Q08 | filename | - | - | - | 976 | 0 |
-| Q08 | rawgrep | - | - | - | 1,017 | 271 |
-| Q08 | readall | Y | Y | Y | 4,750 | 32 |
-| Q08 | docdex | Y | Y | Y | 751 | 554 |
-| Q08 | docdex-sem-x | - | - | - | 1,039 | 166 |
-| Q08 | docdex-fuz | Y | Y | Y | 755 | 481 |
-| Q08 | docdex-sem | - | - | - | 517 | 171 |
+| Q08 | rawgrep | - | - | - | 1,017 | 196 |
+| Q08 | readall | Y | Y | Y | 4,750 | 1 |
+| Q08 | docdex | Y | Y | Y | 698 | 35 |
+| Q08 | docdex-sem-x | - | - | - | 1,039 | 59 |
+| Q08 | docdex-fuz | - | - | - | 291 | 79 |
+| Q08 | docdex-sem | - | - | - | 518 | 44 |
 | Q09 | filename | - | - | - | 976 | 0 |
-| Q09 | rawgrep | - | - | - | 1,017 | 261 |
-| Q09 | readall | Y | Y | Y | 31,296 | 200 |
-| Q09 | docdex | Y | Y | Y | 822 | 455 |
-| Q09 | docdex-sem-x | - | - | - | 786 | 157 |
-| Q09 | docdex-fuz | - | - | - | 425 | 399 |
-| Q09 | docdex-sem | - | - | - | 559 | 153 |
+| Q09 | rawgrep | - | - | - | 1,017 | 235 |
+| Q09 | readall | Y | Y | Y | 31,296 | 7 |
+| Q09 | docdex | Y | Y | Y | 770 | 35 |
+| Q09 | docdex-sem-x | - | - | - | 786 | 42 |
+| Q09 | docdex-fuz | - | - | - | 290 | 35 |
+| Q09 | docdex-sem | - | - | - | 559 | 41 |
 | Q10 | filename | - | - | - | 976 | 0 |
-| Q10 | rawgrep | - | - | - | 1,017 | 251 |
-| Q10 | readall | Y | Y | Y | 15,508 | 106 |
-| Q10 | docdex | Y | Y | Y | 881 | 370 |
-| Q10 | docdex-sem-x | - | - | - | 563 | 163 |
-| Q10 | docdex-fuz | Y | Y | Y | 887 | 241 |
-| Q10 | docdex-sem | - | - | - | 779 | 175 |
+| Q10 | rawgrep | - | - | - | 1,017 | 196 |
+| Q10 | readall | Y | Y | Y | 15,508 | 3 |
+| Q10 | docdex | Y | Y | Y | 823 | 34 |
+| Q10 | docdex-sem-x | - | - | - | 563 | 41 |
+| Q10 | docdex-fuz | - | Y | - | 662 | 34 |
+| Q10 | docdex-sem | - | - | - | 779 | 44 |
 | Q11 | filename | - | - | - | 976 | 0 |
-| Q11 | rawgrep | - | - | - | 1,044 | 305 |
-| Q11 | readall | Y | Y | Y | 19,402 | 15 |
-| Q11 | docdex | Y | Y | Y | 893 | 335 |
-| Q11 | docdex-sem-x | - | - | - | 864 | 74 |
-| Q11 | docdex-fuz | Y | Y | Y | 898 | 122 |
-| Q11 | docdex-sem | - | - | - | 511 | 41 |
+| Q11 | rawgrep | - | - | - | 1,044 | 249 |
+| Q11 | readall | Y | Y | Y | 19,402 | 4 |
+| Q11 | docdex | Y | Y | Y | 835 | 36 |
+| Q11 | docdex-sem-x | - | - | - | 864 | 44 |
+| Q11 | docdex-fuz | - | Y | - | 291 | 35 |
+| Q11 | docdex-sem | - | - | - | 492 | 42 |
 | Q12 | filename | - | - | - | 976 | 0 |
-| Q12 | rawgrep | - | - | - | 1,017 | 350 |
-| Q12 | readall | Y | Y | Y | 37,374 | 6 |
-| Q12 | docdex | Y | Y | Y | 297 | 110 |
-| Q12 | docdex-sem-x | Y | Y | Y | 406 | 59 |
-| Q12 | docdex-fuz | - | - | - | 433 | 43 |
-| Q12 | docdex-sem | - | - | - | 1,033 | 41 |
+| Q12 | rawgrep | - | - | - | 1,017 | 232 |
+| Q12 | readall | Y | Y | Y | 37,374 | 8 |
+| Q12 | docdex | Y | Y | Y | 239 | 34 |
+| Q12 | docdex-sem-x | Y | Y | Y | 406 | 41 |
+| Q12 | docdex-fuz | - | - | - | 239 | 36 |
+| Q12 | docdex-sem | - | - | - | 0 | 41 |

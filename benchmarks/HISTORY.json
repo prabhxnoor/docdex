@@ -1,0 +1,763 @@
+{
+  "records": [
+    {
+      "recorded_utc": "2026-07-29T19:07:56Z",
+      "ref": "v0.2.0",
+      "sha": "c2f217f",
+      "suite_a": {
+        "meta": {
+          "cases": 12,
+          "corpus_tokens": 54150,
+          "embed_s": 0.2,
+          "files": 162,
+          "index_mb": 1.46,
+          "platform": "macOS-26.5.2-arm64-arm-64bit",
+          "python": "3.9.6",
+          "raw_mb": 1.92,
+          "sync_s": 0.8,
+          "token_model": "chars/4 approximation"
+        },
+        "summary": {
+          "docdex": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 34,
+            "med_tokens": 728
+          },
+          "docdex-fuz": {
+            "answered": 5,
+            "hit1": 4,
+            "hit3": 8,
+            "med_ms": 33,
+            "med_tokens": 363
+          },
+          "docdex-sem": {
+            "answered": 0,
+            "hit1": 0,
+            "hit3": 0,
+            "med_ms": 40,
+            "med_tokens": 609
+          },
+          "docdex-sem-x": {
+            "answered": 4,
+            "hit1": 4,
+            "hit3": 5,
+            "med_ms": 41,
+            "med_tokens": 694
+          },
+          "readall": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 4,
+            "med_tokens": 28312
+          }
+        }
+      },
+      "suite_b": {
+        "covered": [
+          "Annual contract value",
+          "Effective date",
+          "GST number",
+          "Liability cap",
+          "PAN",
+          "Payment terms",
+          "Primary contact email",
+          "Registered address"
+        ],
+        "covered_n": 8,
+        "fields": {
+          "Annual contract value": {
+            "section": "other",
+            "source": "Finance/untitled (5).xlsx \u00b71"
+          },
+          "Bank IFSC": {
+            "section": "other",
+            "source": ""
+          },
+          "Effective date": {
+            "section": "other",
+            "source": "Contracts/scan_8841 copy.docx \u00b713"
+          },
+          "GST number": {
+            "section": "other",
+            "source": "Archive/Final_v3_USE.xlsx \u00b71"
+          },
+          "Governing law": {
+            "section": "other",
+            "source": ""
+          },
+          "Legal name": {
+            "section": "other",
+            "source": ""
+          },
+          "Liability cap": {
+            "section": "other",
+            "source": "Misc/document1 (4).pdf \u00b73"
+          },
+          "PAN": {
+            "section": "other",
+            "source": "Archive/Final_v3_USE.xlsx \u00b72"
+          },
+          "Payment terms": {
+            "section": "other",
+            "source": "Contracts/scan_8841 copy.docx \u00b76"
+          },
+          "Primary contact email": {
+            "section": "other",
+            "source": "Operations/notes_final.md \u00b73"
+          },
+          "Registered address": {
+            "section": "other",
+            "source": "Archive/Final_v3_USE.xlsx \u00b74"
+          },
+          "Renewal term": {
+            "section": "other",
+            "source": ""
+          }
+        },
+        "findable": 11,
+        "honest_absent": [],
+        "packet_sha256": "52f98e7787b712d7c7cd6c9660f7d88b1cb7f70e1969ff15ea34f260bb4a9d72",
+        "search_loop_tokens": 20228,
+        "tokens": 1464
+      },
+      "version": "0.2.0"
+    },
+    {
+      "recorded_utc": "2026-07-29T19:08:02Z",
+      "ref": "v0.2.1",
+      "sha": "b8c8e41",
+      "suite_a": {
+        "meta": {
+          "cases": 12,
+          "corpus_tokens": 54150,
+          "embed_s": 0.2,
+          "files": 162,
+          "index_mb": 1.46,
+          "platform": "macOS-26.5.2-arm64-arm-64bit",
+          "python": "3.9.6",
+          "raw_mb": 1.92,
+          "sync_s": 0.7,
+          "token_model": "chars/4 approximation"
+        },
+        "summary": {
+          "docdex": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 34,
+            "med_tokens": 728
+          },
+          "docdex-fuz": {
+            "answered": 5,
+            "hit1": 4,
+            "hit3": 8,
+            "med_ms": 34,
+            "med_tokens": 363
+          },
+          "docdex-sem": {
+            "answered": 0,
+            "hit1": 0,
+            "hit3": 0,
+            "med_ms": 41,
+            "med_tokens": 609
+          },
+          "docdex-sem-x": {
+            "answered": 4,
+            "hit1": 4,
+            "hit3": 5,
+            "med_ms": 40,
+            "med_tokens": 694
+          },
+          "readall": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 4,
+            "med_tokens": 28312
+          }
+        }
+      },
+      "suite_b": {
+        "covered": [
+          "Annual contract value",
+          "Effective date",
+          "GST number",
+          "Liability cap",
+          "PAN",
+          "Payment terms",
+          "Primary contact email",
+          "Registered address"
+        ],
+        "covered_n": 8,
+        "fields": {
+          "Annual contract value": {
+            "section": "other",
+            "source": "Finance/untitled (5).xlsx \u00b71"
+          },
+          "Bank IFSC": {
+            "section": "other",
+            "source": ""
+          },
+          "Effective date": {
+            "section": "other",
+            "source": "Contracts/scan_8841 copy.docx \u00b713"
+          },
+          "GST number": {
+            "section": "other",
+            "source": "Archive/Final_v3_USE.xlsx \u00b71"
+          },
+          "Governing law": {
+            "section": "other",
+            "source": ""
+          },
+          "Legal name": {
+            "section": "other",
+            "source": ""
+          },
+          "Liability cap": {
+            "section": "other",
+            "source": "Misc/document1 (4).pdf \u00b73"
+          },
+          "PAN": {
+            "section": "other",
+            "source": "Archive/Final_v3_USE.xlsx \u00b72"
+          },
+          "Payment terms": {
+            "section": "other",
+            "source": "Contracts/scan_8841 copy.docx \u00b76"
+          },
+          "Primary contact email": {
+            "section": "other",
+            "source": "Operations/notes_final.md \u00b73"
+          },
+          "Registered address": {
+            "section": "other",
+            "source": "Archive/Final_v3_USE.xlsx \u00b74"
+          },
+          "Renewal term": {
+            "section": "other",
+            "source": ""
+          }
+        },
+        "findable": 11,
+        "honest_absent": [],
+        "packet_sha256": "0cdb293b28311fa6db5fcdb4c34df8450759209a4b2f1eee7c58f5836e69fd23",
+        "search_loop_tokens": 20228,
+        "tokens": 1465
+      },
+      "version": "0.2.1"
+    },
+    {
+      "recorded_utc": "2026-07-29T19:08:09Z",
+      "ref": "v0.3.0",
+      "sha": "8c205e0",
+      "suite_a": {
+        "meta": {
+          "cases": 12,
+          "corpus_tokens": 54150,
+          "embed_s": 0.2,
+          "files": 162,
+          "index_mb": 1.46,
+          "platform": "macOS-26.5.2-arm64-arm-64bit",
+          "python": "3.9.6",
+          "raw_mb": 1.92,
+          "sync_s": 0.7,
+          "token_model": "chars/4 approximation"
+        },
+        "summary": {
+          "docdex": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 33,
+            "med_tokens": 728
+          },
+          "docdex-fuz": {
+            "answered": 5,
+            "hit1": 4,
+            "hit3": 8,
+            "med_ms": 34,
+            "med_tokens": 363
+          },
+          "docdex-sem": {
+            "answered": 0,
+            "hit1": 0,
+            "hit3": 0,
+            "med_ms": 41,
+            "med_tokens": 609
+          },
+          "docdex-sem-x": {
+            "answered": 4,
+            "hit1": 4,
+            "hit3": 5,
+            "med_ms": 40,
+            "med_tokens": 694
+          },
+          "readall": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 4,
+            "med_tokens": 28312
+          }
+        }
+      },
+      "suite_b": {
+        "covered": [
+          "Annual contract value",
+          "Effective date",
+          "GST number",
+          "Liability cap",
+          "PAN",
+          "Payment terms",
+          "Primary contact email",
+          "Registered address"
+        ],
+        "covered_n": 8,
+        "fields": {
+          "Annual contract value": {
+            "section": "answers",
+            "source": "Finance/untitled (5).xlsx \u00b71"
+          },
+          "Bank IFSC": {
+            "section": "missing",
+            "source": ""
+          },
+          "Effective date": {
+            "section": "answers",
+            "source": "Contracts/scan_8841 copy.docx \u00b713"
+          },
+          "GST number": {
+            "section": "answers",
+            "source": "Archive/Final_v3_USE.xlsx \u00b71"
+          },
+          "Governing law": {
+            "section": "missing",
+            "source": ""
+          },
+          "Legal name": {
+            "section": "missing",
+            "source": ""
+          },
+          "Liability cap": {
+            "section": "answers",
+            "source": "Misc/document1 (4).pdf \u00b73"
+          },
+          "PAN": {
+            "section": "answers",
+            "source": "Archive/Final_v3_USE.xlsx \u00b72"
+          },
+          "Payment terms": {
+            "section": "answers",
+            "source": "Contracts/scan_8841 copy.docx \u00b76"
+          },
+          "Primary contact email": {
+            "section": "answers",
+            "source": "Operations/notes_final.md \u00b73"
+          },
+          "Registered address": {
+            "section": "answers",
+            "source": "Archive/Final_v3_USE.xlsx \u00b74"
+          },
+          "Renewal term": {
+            "section": "missing",
+            "source": ""
+          }
+        },
+        "findable": 11,
+        "honest_absent": [
+          "Bank IFSC"
+        ],
+        "packet_sha256": "0555c7287eea98fa7e722ec6daa9c4f0880fa329317e72bd9fa8d1b34bb7331f",
+        "search_loop_tokens": 20228,
+        "tokens": 1338
+      },
+      "version": "0.3.0"
+    },
+    {
+      "recorded_utc": "2026-07-29T19:08:15Z",
+      "ref": "v0.4.0",
+      "sha": "2db4b3b",
+      "suite_a": {
+        "meta": {
+          "cases": 12,
+          "corpus_tokens": 54150,
+          "embed_s": 0.2,
+          "files": 162,
+          "index_mb": 1.46,
+          "platform": "macOS-26.5.2-arm64-arm-64bit",
+          "python": "3.9.6",
+          "raw_mb": 1.92,
+          "sync_s": 0.7,
+          "token_model": "chars/4 approximation"
+        },
+        "summary": {
+          "docdex": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 34,
+            "med_tokens": 728
+          },
+          "docdex-fuz": {
+            "answered": 5,
+            "hit1": 4,
+            "hit3": 8,
+            "med_ms": 34,
+            "med_tokens": 363
+          },
+          "docdex-sem": {
+            "answered": 0,
+            "hit1": 0,
+            "hit3": 0,
+            "med_ms": 41,
+            "med_tokens": 609
+          },
+          "docdex-sem-x": {
+            "answered": 4,
+            "hit1": 4,
+            "hit3": 5,
+            "med_ms": 40,
+            "med_tokens": 694
+          },
+          "readall": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 4,
+            "med_tokens": 28312
+          }
+        }
+      },
+      "suite_b": {
+        "covered": [
+          "Annual contract value",
+          "Effective date",
+          "GST number",
+          "Liability cap",
+          "PAN",
+          "Payment terms",
+          "Primary contact email",
+          "Registered address"
+        ],
+        "covered_n": 8,
+        "fields": {
+          "Annual contract value": {
+            "section": "weak",
+            "source": "Finance/untitled (5).xlsx \u00b71"
+          },
+          "Bank IFSC": {
+            "section": "missing",
+            "source": ""
+          },
+          "Effective date": {
+            "section": "answers",
+            "source": "Contracts/scan_8841 copy.docx \u00b713"
+          },
+          "GST number": {
+            "section": "weak",
+            "source": "Archive/Final_v3_USE.xlsx \u00b71"
+          },
+          "Governing law": {
+            "section": "weak",
+            "source": "Contracts/draft_100.md \u00b70"
+          },
+          "Legal name": {
+            "section": "missing",
+            "source": ""
+          },
+          "Liability cap": {
+            "section": "answers",
+            "source": "Misc/document1 (4).pdf \u00b73"
+          },
+          "PAN": {
+            "section": "weak",
+            "source": "Archive/Final_v3_USE.xlsx \u00b72"
+          },
+          "Payment terms": {
+            "section": "weak",
+            "source": "Contracts/scan_8841 copy.docx \u00b76"
+          },
+          "Primary contact email": {
+            "section": "weak",
+            "source": "Operations/notes_final.md \u00b73"
+          },
+          "Registered address": {
+            "section": "weak",
+            "source": "Archive/Final_v3_USE.xlsx \u00b74"
+          },
+          "Renewal term": {
+            "section": "weak",
+            "source": "Finance/draft_094.md \u00b70"
+          }
+        },
+        "findable": 11,
+        "honest_absent": [
+          "Bank IFSC"
+        ],
+        "packet_sha256": "cdb4c492193c8d95b332cdd9fa721195b863bbebd55a70138067dc77820b408c",
+        "search_loop_tokens": 20228,
+        "tokens": 1571
+      },
+      "version": "0.4.0"
+    },
+    {
+      "recorded_utc": "2026-07-29T19:08:22Z",
+      "ref": "v0.5.0",
+      "sha": "b55403d",
+      "suite_a": {
+        "meta": {
+          "cases": 12,
+          "corpus_tokens": 54150,
+          "embed_s": 0.2,
+          "files": 162,
+          "index_mb": 1.46,
+          "platform": "macOS-26.5.2-arm64-arm-64bit",
+          "python": "3.9.6",
+          "raw_mb": 1.92,
+          "sync_s": 0.7,
+          "token_model": "chars/4 approximation"
+        },
+        "summary": {
+          "docdex": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 34,
+            "med_tokens": 728
+          },
+          "docdex-fuz": {
+            "answered": 5,
+            "hit1": 4,
+            "hit3": 8,
+            "med_ms": 34,
+            "med_tokens": 363
+          },
+          "docdex-sem": {
+            "answered": 0,
+            "hit1": 0,
+            "hit3": 0,
+            "med_ms": 41,
+            "med_tokens": 609
+          },
+          "docdex-sem-x": {
+            "answered": 4,
+            "hit1": 4,
+            "hit3": 5,
+            "med_ms": 41,
+            "med_tokens": 694
+          },
+          "readall": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 6,
+            "med_tokens": 28312
+          }
+        }
+      },
+      "suite_b": {
+        "covered": [
+          "Annual contract value",
+          "Effective date",
+          "GST number",
+          "Governing law",
+          "Liability cap",
+          "PAN",
+          "Primary contact email",
+          "Registered address"
+        ],
+        "covered_n": 8,
+        "fields": {
+          "Annual contract value": {
+            "section": "weak",
+            "source": "Finance/untitled (5).xlsx \u00b71"
+          },
+          "Bank IFSC": {
+            "section": "missing",
+            "source": ""
+          },
+          "Effective date": {
+            "section": "answers",
+            "source": "Contracts/scan_8841 copy.docx \u00b713"
+          },
+          "GST number": {
+            "section": "weak",
+            "source": "Archive/Final_v3_USE.xlsx \u00b71"
+          },
+          "Governing law": {
+            "section": "weak",
+            "source": "Contracts/scan_8841 copy.docx \u00b79"
+          },
+          "Legal name": {
+            "section": "weak",
+            "source": "Contracts/draft_085.md \u00b70"
+          },
+          "Liability cap": {
+            "section": "answers",
+            "source": "Misc/document1 (4).pdf \u00b73"
+          },
+          "PAN": {
+            "section": "weak",
+            "source": "Archive/Final_v3_USE.xlsx \u00b72"
+          },
+          "Payment terms": {
+            "section": "weak",
+            "source": "Archive/draft_006.md \u00b70"
+          },
+          "Primary contact email": {
+            "section": "weak",
+            "source": "Operations/notes_final.md \u00b73"
+          },
+          "Registered address": {
+            "section": "weak",
+            "source": "Archive/Final_v3_USE.xlsx \u00b74"
+          },
+          "Renewal term": {
+            "section": "weak",
+            "source": "Finance/draft_094.md \u00b70"
+          }
+        },
+        "findable": 11,
+        "honest_absent": [
+          "Bank IFSC"
+        ],
+        "packet_sha256": "cff112febbe3bbac42a00aff2fad6e3c86577fd0142ac17654d26ac373efedd4",
+        "search_loop_tokens": 20241,
+        "tokens": 1708
+      },
+      "version": "0.5.0"
+    },
+    {
+      "recorded_utc": "2026-07-29T19:08:29Z",
+      "ref": "v0.5.1",
+      "sha": "29d875e",
+      "suite_a": {
+        "meta": {
+          "cases": 12,
+          "corpus_tokens": 54150,
+          "embed_s": 0.2,
+          "files": 162,
+          "index_mb": 1.53,
+          "platform": "macOS-26.5.2-arm64-arm-64bit",
+          "python": "3.9.6",
+          "raw_mb": 1.92,
+          "sync_s": 0.8,
+          "token_model": "chars/4 approximation"
+        },
+        "summary": {
+          "docdex": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 35,
+            "med_tokens": 728
+          },
+          "docdex-fuz": {
+            "answered": 5,
+            "hit1": 4,
+            "hit3": 8,
+            "med_ms": 35,
+            "med_tokens": 363
+          },
+          "docdex-sem": {
+            "answered": 0,
+            "hit1": 0,
+            "hit3": 0,
+            "med_ms": 41,
+            "med_tokens": 609
+          },
+          "docdex-sem-x": {
+            "answered": 4,
+            "hit1": 4,
+            "hit3": 5,
+            "med_ms": 41,
+            "med_tokens": 694
+          },
+          "readall": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 6,
+            "med_tokens": 28312
+          }
+        }
+      },
+      "suite_b": {
+        "covered": [
+          "Annual contract value",
+          "Effective date",
+          "GST number",
+          "Governing law",
+          "Liability cap",
+          "PAN",
+          "Payment terms",
+          "Primary contact email",
+          "Registered address"
+        ],
+        "covered_n": 9,
+        "fields": {
+          "Annual contract value": {
+            "section": "weak",
+            "source": "Finance/untitled (5).xlsx \u00b71"
+          },
+          "Bank IFSC": {
+            "section": "missing",
+            "source": ""
+          },
+          "Effective date": {
+            "section": "answers",
+            "source": "Contracts/scan_8841 copy.docx \u00b713"
+          },
+          "GST number": {
+            "section": "weak",
+            "source": "Archive/Final_v3_USE.xlsx \u00b71"
+          },
+          "Governing law": {
+            "section": "weak",
+            "source": "Contracts/scan_8841 copy.docx \u00b79"
+          },
+          "Legal name": {
+            "section": "weak",
+            "source": "Contracts/draft_085.md \u00b70"
+          },
+          "Liability cap": {
+            "section": "answers",
+            "source": "Misc/document1 (4).pdf \u00b73"
+          },
+          "PAN": {
+            "section": "weak",
+            "source": "Archive/Final_v3_USE.xlsx \u00b72"
+          },
+          "Payment terms": {
+            "section": "weak",
+            "source": "Contracts/scan_8841 copy.docx \u00b76"
+          },
+          "Primary contact email": {
+            "section": "weak",
+            "source": "Operations/notes_final.md \u00b73"
+          },
+          "Registered address": {
+            "section": "weak",
+            "source": "Archive/Final_v3_USE.xlsx \u00b74"
+          },
+          "Renewal term": {
+            "section": "weak",
+            "source": "Finance/draft_094.md \u00b70"
+          }
+        },
+        "findable": 11,
+        "honest_absent": [
+          "Bank IFSC"
+        ],
+        "packet_sha256": "d4d0a2b903c919770735bb672cf21060458e5743ee580ad349509b8a9a3e2976",
+        "search_loop_tokens": 20176,
+        "tokens": 1595
+      },
+      "version": "0.5.1"
+    }
+  ]
+}

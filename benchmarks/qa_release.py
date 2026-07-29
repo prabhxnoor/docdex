@@ -155,7 +155,33 @@ def main() -> int:
     shutil.copytree(REPO / "benchmarks", base_tree / "benchmarks")
 
     # ------------------------------------------ gate 2: per-field, not headline
-    print(f"\n[2/5] form benchmark vs {args.base} — per field")
+    print(f"\n[2/5] benchmarks vs {args.base} — every suite, per case")
+    # Suite A (single-fact retrieval) is compared per method here too. It was
+    # historically only recorded at v0.1.1, which is how a five-release blind spot
+    # opened up; `bench_all.py` owns the measurement so both tools agree.
+    sys.path.insert(0, str(REPO / "benchmarks"))
+    import bench_all
+    head_rec = bench_all.measure(REPO, "HEAD", head_sha, "head")
+    base_rec = bench_all.measure(base_tree, args.base, "", "base")
+    ha, ba = head_rec["suite_a"], base_rec["suite_a"]
+    if "summary" in ha and "summary" in ba:
+        a_lost = []
+        for m in bench_all.A_METHODS:
+            if m in ha["summary"] and m in ba["summary"]:
+                for k in bench_all.A_HIGHER_BETTER:
+                    p, c = ba["summary"][m].get(k), ha["summary"][m].get(k)
+                    if p is not None and c is not None and c < p:
+                        a_lost.append(f"{bench_all.A_LABEL.get(m, m)} {k} {p}->{c}")
+        if a_lost:
+            failures.append(f"suite A regressed vs {args.base}: {a_lost}")
+            for x in a_lost:
+                print(f"      REGRESSED suite A {x}")
+        else:
+            print("      suite A: no method regressed")
+    else:
+        notes.append("suite A not comparable (one side failed to run) — "
+                     f"head={ha.get('error', 'ok')} base={ba.get('error', 'ok')}")
+
     head_b = bench(REPO, cache=work / "cache_head")
     base_b = bench(base_tree, cache=work / "cache_base")
     key = "docdex context"

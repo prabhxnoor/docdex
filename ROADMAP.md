@@ -539,6 +539,22 @@ item updates the `[Unreleased]` section of [`CHANGELOG.md`](CHANGELOG.md) with a
 plain-English line. A release tags, pushes, and verifies a clean install from the
 built wheel before announcing.
 
+**Every release records every benchmark suite** (added v0.5.1):
+
+```
+python3 benchmarks/bench_all.py record          # append this release to the history
+python3 benchmarks/bench_all.py sweep <ref>...  # backfill / re-measure old releases
+```
+
+Results land in [`benchmarks/HISTORY.json`](benchmarks/HISTORY.json) and a generated
+[`benchmarks/HISTORY.md`](benchmarks/HISTORY.md) table, one row per release, with a
+regression list computed between consecutive releases. `sweep` overlays **today's**
+`benchmarks/` onto each checked-out release so the harness, corpus and scoring are
+identical everywhere and only `src/` varies — otherwise the comparison measures the
+oracle, not the product. *This was added because Suite A had not been re-run since
+v0.1.1: five releases with an unverified headline in the README, and no trend that
+could show when anything moved.*
+
 **Every release runs the QA gate before tagging** (added v0.5.1):
 
 ```

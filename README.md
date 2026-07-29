@@ -36,11 +36,13 @@ The repo ships a reproducible benchmark (`python3 benchmarks/run_benchmark.py`):
 | browse by filename (no index) | 0/12 | 0/12 | 976 (then fails) |
 | raw `grep -ril` (no index) | 0/12 | 0/12 | 1,017 (then fails) |
 | read everything (no index) | 12/12 | 12/12 | **28,312** |
-| **`docdex search`** | **12/12** | **12/12** | **780** |
+| **`docdex search`** | **12/12** | **12/12** | **728** |
 
-**36× less context per question**, after a one-time sub-second indexing cost on this corpus — and the gap widens with corpus size, because "read everything" scales with the corpus while `docdex search` doesn't. Filename browsing and grep aren't just worse, they're structurally blind: Office files are zip containers and PDF streams are compressed, so their content is invisible to both.
+**39× less context per question**, after a one-time sub-second indexing cost on this corpus — and the gap widens with corpus size, because "read everything" scales with the corpus while `docdex search` doesn't. Filename browsing and grep aren't just worse, they're structurally blind: Office files are zip containers and PDF streams are compressed, so their content is invisible to both.
 
 Honest caveats, in the report itself ([benchmarks/RESULTS.md](benchmarks/RESULTS.md)): token counts are a chars/4 approximation; the corpus is synthetic (by design — it's checked in and re-runnable by anyone); and the bundled semantic backend is lexical, so it cannot bridge a *pure* paraphrase — keyword `search` is the workhorse, and true paraphrase retrieval needs an external embedding via `DOCDEX_EMBED_CMD`.
+
+The table above is the **exact-wording** query. Type a *paraphrase* instead and `docdex search` ranks the right file first on only **4 of 12** questions — the honest weak spot, and the reason meaning-aware retrieval is the active line of work. Every release's numbers for every suite are kept in [benchmarks/HISTORY.md](benchmarks/HISTORY.md) so this can't quietly drift again: the figures above went unverified from v0.1.1 until v0.5.1, and re-running the suite across every tagged release showed the paraphrase path has been unchanged since v0.2.0, when BM25/FTS5 replaced the original scorer.
 
 **The bigger test — a real multi-field job.** Finding one fact is the easy case; the real job is "fill this whole form from a messy folder." A second benchmark ([benchmarks/RESULTS_TASK.md](benchmarks/RESULTS_TASK.md)) plants a 12-field vendor onboarding form's answers across realistically *large* contracts/sheets/PDFs (one field deliberately absent) and measures context delivered per token:
 
