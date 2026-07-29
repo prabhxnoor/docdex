@@ -19,6 +19,7 @@ corpus (honesty), and tokens consumed. Deterministic (seed 7); rerun with
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import re
@@ -189,13 +190,49 @@ def method_search_loop(project, ground_truth, fields):
     return {"covered": covered("\n".join(texts), ground_truth), "tokens": tokens}
 
 
+def field_attribution(packet: str, fields) -> dict:
+    """Per field: which packet section carries it, and what source it cites.
+
+    A set of covered field *names* is too coarse to be a regression detector — it
+    cannot see a correct value credited to the wrong source, or an answer demoted
+    to 'weak'. `qa_release.py` diffs this per field instead.
+    """
+    section, out = None, {}
+    for raw in packet.splitlines():
+        low = raw.lower().strip()
+        if low.startswith("## answers"):
+            section = "answers"
+        elif low.startswith("## needs follow-up"):
+            section = "weak"
+        elif low.startswith("## missing"):
+            section = "missing"
+        elif low.startswith("## dropped"):
+            section = "dropped"
+        elif low.startswith("## "):
+            section = "other"
+        elif section and raw.strip().startswith("- "):
+            body = raw.strip()[2:]
+            for f in fields:
+                if body.startswith(f) and f not in out:
+                    m = re.search(r"\[([^\]]+)\]\s*$", body)
+                    out[f] = {"section": section,
+                              "source": m.group(1) if m else ""}
+    return {f: out.get(f, {"section": "absent", "source": ""}) for f in fields}
+
+
 def method_context(project, ground_truth, fields, budget):
     packet = ctxmod.build_packet(project, "fill the vendor onboarding form",
                                  budget=budget, form_fields=fields)
     honest = [a for a in ABSENT if f"{a}: not found" in packet]
     return {"covered": covered(packet, ground_truth),
             "tokens": tok.count_tokens(packet),
-            "honest_absent": honest, "packet": packet}
+            "honest_absent": honest,
+            "fields": field_attribution(packet, fields),
+            # A hash of the whole packet: the coverage/token numbers can stay
+            # identical while ranking, citations or section order change, so
+            # determinism has to be checked against the bytes.
+            "packet_sha256": hashlib.sha256(packet.encode("utf-8")).hexdigest(),
+            "packet": packet}
 
 
 def main():
@@ -246,18 +283,21 @@ def main():
         "the agent to guess. So: ~73% of the findable context at ~7% of the search-loop's "
         "token cost, with an honesty signal the others can't give.", "",
         "## The honest part: which fields miss, and why", "",
-        "These are not bugs — they are the known limits of lexical-only retrieval that "
-        "the v0.3 roadmap targets (field-alias registry, stemming/synonyms, reranking):",
+        "These are not bugs — they are the gap the roadmap still targets. Stemming, "
+        "free-text synonyms and the utility reranker shipped in v0.5.0, and v0.5.1 "
+        "stopped stemming from burying selective literal terms; what remains is "
+        "**form-field** meaning-awareness — reading a field's value from a label "
+        "written as a synonym or a different inflection:",
         "",
     ]
     reasons = {
-        "Legal name": "the corpus never says \"legal name\" — the value is under "
-                      "\"...as the Vendor\" (needs a field-alias registry).",
-        "Governing law": "a short distractor containing \"governing law\" out-ranks the "
-                         "long real contract (\"governed by the laws of...\") — needs "
-                         "stemming + length-aware reranking.",
-        "Renewal term": "same shape — \"renewal term\" the phrase loses to distractors "
-                        "while the value sits deep in a large PDF.",
+        "Legal name": "the corpus never says \"legal name\" — the value sits under "
+                      "\"...as the Vendor\". Free-text synonyms shipped in v0.5.0; "
+                      "reading a *form field's* value from a synonym label is the "
+                      "deferred piece.",
+        "Renewal term": "the label matches distractors and the clause carrying the "
+                        "value is not surfaced — the same label-vs-value gap as "
+                        "Legal name.",
     }
     for f in missed:
         lines.append(f"- **{f}**: {reasons.get(f, 'not retrieved by lexical match.')}")

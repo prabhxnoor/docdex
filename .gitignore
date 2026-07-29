@@ -22,3 +22,7 @@ Thumbs.db
 # docdex's own per-project state must never end up in this repo
 .docdex.json
 _index/
+
+# QA gate scratch (should never be committed)
+_qa_cache/
+_qa_junit_*.xml
