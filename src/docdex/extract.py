@@ -166,6 +166,80 @@ def candidate_passwords(rel_path: str, secrets: dict) -> list:
     return [pw for key, pw in secrets.items() if key in rel_path]
 
 
+# The OLE2 / "CDFV2" container. A password-protected .docx/.pptx/.xlsx is written as
+# one of these rather than as a zip, so it raises the same "not a package" error as a
+# file that is simply damaged — the two need telling apart before either can be acted on.
+_OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def _head_bytes(path: str, count: int) -> bytes:
+    try:
+        with open(path, "rb") as f:
+            return f.read(count)
+    except OSError:
+        return b""
+
+
+def describe_failure(exc: BaseException, path: str, passwords=()) -> str:
+    """Plain-language reason an extraction failed, for `extract_status` and `doctor`.
+
+    The raw exception text was actively misleading on the real corpus. A present but
+    truncated `.docx` reported `PackageNotFoundError: Package not found at '<path>'`,
+    which reads as "that file is missing" and sends you looking for a path problem; an
+    encrypted PDF with no configured password reported `PDFPasswordIncorrect:` with an
+    empty message, which reads as "docdex tried a password and got it wrong". Telling
+    six damaged files from four protected ones took a by-hand investigation of zip
+    directories and PDF trailers that this function now does up front.
+
+    The exception name is kept in brackets at the end so nothing is lost for debugging.
+    Note that `passwords` only ever apply to PDFs (see `extract`), so an encrypted
+    Office file must NOT be told to add one — advice that cannot work is the thing
+    this is fixing.
+    """
+    name = type(exc).__name__
+    if name == "PDFPasswordIncorrect":
+        if passwords:
+            return (f"encrypted PDF — the password configured in .docdex/secrets.json "
+                    f"did not work [{name}]")
+        return (f"encrypted PDF — no password configured; add one to "
+                f".docdex/secrets.json [{name}]")
+    # `BadZipFile` belongs with `PackageNotFoundError`: python-docx and python-pptx
+    # wrap a non-zip file in their own error, but openpyxl lets zipfile's through, so
+    # an encrypted or truncated .xlsx used to fall past every branch here and reach the
+    # user as a bare "BadZipFile: File is not a zip file". Found by adversarial review
+    # of this release's tests, which only ever exercised .docx.
+    if name in ("PackageNotFoundError", "BadZipFile", "PSEOF") \
+            and not os.path.exists(path):
+        # Adversarial review of this release: both branches below assert "the file is
+        # present", which is the whole point of them — but a file deleted between the
+        # inventory walk and extraction raises the same errors, and then the message
+        # states the exact opposite of the filesystem. Checked, not assumed.
+        return f"file disappeared during extraction — it is no longer on disk [{name}]"
+    if name in ("PackageNotFoundError", "BadZipFile"):
+        if _head_bytes(path, len(_OLE2_MAGIC)).startswith(_OLE2_MAGIC):
+            # Two different causes land here and the remedy is the same for both, so
+            # the container is named rather than the cause guessed: a password-protected
+            # Office file is written as OLE2/CDFV2, and so is a legacy binary document
+            # that has been given a modern extension. Adversarial review flagged this
+            # branch for asserting "encrypted"; measurement showed a genuine .doc/.xls
+            # never reaches it (those route to textutil and extract normally).
+            #
+            # `secrets.json` is deliberately NOT mentioned. It used to appear here as a
+            # disclaimer ("passwords work for PDFs only"), and review pointed out that
+            # naming a file docdex cannot use for this format is an invitation to try
+            # it whatever the surrounding words say.
+            return (f"encrypted or legacy Office file — an OLE2/CDFV2 container, not a "
+                    f".docx/.pptx/.xlsx package; docdex cannot read password-protected "
+                    f"Office files at all — re-save it as an unprotected "
+                    f".docx/.pptx/.xlsx [{name}]")
+        return (f"damaged or truncated Office file — the file is present but has no "
+                f"complete zip directory [{name}]")
+    if name == "PSEOF":
+        return (f"damaged or truncated PDF — the file is present but ends mid-structure "
+                f"[{name}]")
+    return f"{name}: {exc}"
+
+
 def extract_pdf(path: str, passwords=()) -> str:
     from pdfminer.high_level import extract_text
     from pdfminer.pdfdocument import PDFPasswordIncorrect

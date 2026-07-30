@@ -6,7 +6,21 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-07-30 (SHIPPED **v0.5.4 "The upgrade that broke the index"** —
+> _Last updated: 2026-07-30 (SHIPPED **v0.5.5 "Advice that works"** — three things
+> docdex said about itself were untrue or impossible to act on, all found while
+> checking v0.5.4 end to end on the real corpus. The worst made v0.5.4's own fix
+> unreachable: `search` refused an empty index and told the user to run `docdex sync`,
+> but the rebuild only ran when a document had changed, so a sync over an unchanged
+> folder left the index empty and printed the same instruction again — a loop with no
+> way out. A rebuild is now decided by whether the index covers the stored text.
+> Also: `doctor` counted 19 files it had deliberately skipped for size as *missing
+> caches* and turned a healthy corpus red, and extraction errors described a present
+> but truncated file as "not found" and an unconfigured password as "incorrect". 311
+> tests. The process gap that let this ship — nobody checked that the instruction the
+> product prints actually resolves the state it names — is now a required step in
+> `docs/RELEASING.md`.)_
+>
+> _Previously: 2026-07-30 (SHIPPED **v0.5.4 "The upgrade that broke the index"** —
 > a regression this project shipped, reported by the user: after v0.5.2 `docdex sync`
 > crashed on any index that already existed, and keyword search then returned nothing
 > across a 10,498-file corpus without saying so. The new column was never added to an
@@ -335,16 +349,18 @@ are what remain, and they are **v0.5.2 ← next**.
   label present anywhere always decides.
 - ⬜ **Apposition: a value written BEFORE its label** — "Helios Components Pvt Ltd
   **as the Vendor**", "Acme (the **Supplier**)". The standard way contracts name a
-  party, and the benchmark's last miss (`Legal name`). **→ v0.5.5** (v0.5.4 went to
-  repairing the schema-upgrade regression). Needs a required
+  party, and the benchmark's last miss (`Legal name`). **→ v0.5.6** (v0.5.4 went to
+  repairing the schema-upgrade regression, and v0.5.5 to the three false or
+  unactionable things that repair turned out to be saying). Needs a required
   connective, a bounded lookback and a clause-boundary stop: unbounded backwards
   reading is the DDX-029 cross-field leakage class ("Payment terms are net-45.
   Vendor: Acme" would hand `net-45` to `Legal name`), so it gets its own change and
   its own review rather than riding along with something else.
 - ⬜ **Optional embeddings / RRF** via `DOCDEX_EMBED_CMD` (local-only) for pure
   paraphrase and folder discovery — exact IDs, amounts, dates, and missing-evidence
-  honesty stay lexical/structured. **→ v0.5.6** (was v0.5.1, which the precision fix took,
-  then pushed by the Spotlight fix, the schema-upgrade repair, and apposition); off by
+  honesty stay lexical/structured. **→ v0.5.7** (was v0.5.1, which the precision fix took,
+  then pushed by the Spotlight fix, the schema-upgrade repair, its follow-up, and
+  apposition); off by
   default, needs a local embedder. Note v0.5.1 already built the
   two-ranking fusion plumbing this will extend — a vector ranking becomes a third
   input to the same merge.
@@ -701,3 +717,43 @@ not oversights — each was reproduced or reasoned about, none is fixed):
   bytes across hash seeds, but the fixture never produces the large blocks of
   equal-scoring chunks where set-iteration order would actually show. Needs a stress
   corpus of hundreds of tied chunks across several queries.
+
+**Raised by the v0.5.5 review and deliberately deferred** (each reproduced by
+measurement — see `docdex-qa/v0.5.5/ADJUDICATION.md` — and each pre-existing, not
+introduced by that release):
+
+- ⬜ **Nothing verifies the index against the caches.** Every health check compares the
+  FTS mirrors to the `chunks` table, so a `chunks` that has itself lost rows reads as
+  perfectly healthy: the mirrors match it, and the missing documents are silently
+  unfindable. Reproduced with a direct `DELETE FROM chunks`, so it needs the database
+  edited behind docdex's back — but that is also what a partial disk failure looks like.
+  Belongs with the `doctor --deep` item above: compare `files`/`chunks` against the
+  `.txt` caches that are the actual source of truth. The obvious cheap check
+  (`COUNT(DISTINCT rel)` in `chunks` versus `files`) is a trap — it fires forever on any
+  file whose chunks all fall under the 3-character floor.
+- ⬜ **A document over the size cap keeps answering with its old text.** If a file was
+  cached while under `max_extract_mb` and is then edited past it, `sync` records
+  `skipped` and returns before touching the cache it wrote earlier, while the lexical
+  index keeps serving the previous contents — a stale answer with no marker saying so.
+  Measured (`evidence/adjudicate.py`, case B). Options: drop the stale cache when a file
+  becomes skipped (loses searchability, but honestly), or keep it and mark the age.
+- ⬜ **Gate 2 hides a conflict promoted to an answer.** A field that moves from the
+  `conflicts` section on base to `answers` on HEAD passes, because only demotions out of
+  `answers` are checked — so hiding a disagreement reads as an improvement. Needs a
+  conflict-resolution oracle to distinguish a legitimate resolution from a suppressed
+  one; until then the section transition is invisible to the gate.
+- ⬜ **Gate 2 compares suite A per method, not per query.** A lost fact offset by a newly
+  found one leaves recall unchanged and passes. The label now says so, but the fix is a
+  per-query comparison of expected value, source and absence state.
+- ⬜ **The fixed oracle is not immutable.** `sweep`/`bench_all` overlay today's
+  `benchmarks/` onto every release so only `src/` differs — which also means a loosened
+  `covered()` is applied to base and HEAD alike, and a real regression disappears.
+  Wants oracle self-tests over near-miss IDs, amounts, dates and sources, so the
+  measuring stick is itself measured.
+- ⬜ **Determinism is only checked within one day and one clock.** Gate 4 compares packet
+  bytes across runs and hash seeds, but all runs share a wall clock, so a new
+  `date.today()` dependence in the packet would pass today and break tomorrow. Needs
+  injected clock values and time zones, or no clock access on the packet path at all.
+- ⬜ **Nothing runs on Linux.** The gate is a local macOS script, and the product claims
+  macOS and Linux with their native SQLite/FTS5 builds. A platform-specific retrieval
+  difference would ship unseen. Needs CI, not a bigger script.

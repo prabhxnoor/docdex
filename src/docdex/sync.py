@@ -149,12 +149,15 @@ class _Extractor:
             except OSError:
                 pass
         dest.parent.mkdir(parents=True, exist_ok=True)
+        passwords = ex.candidate_passwords(rel, self.secrets)
         try:
-            text = ex.extract(str(abs_path),
-                              passwords=ex.candidate_passwords(rel, self.secrets))
+            text = ex.extract(str(abs_path), passwords=passwords)
         except Exception as e:  # noqa: BLE001 - any parser error is a data point
-            self.error_lines.append(f"FAIL\t{rel}\t{type(e).__name__}: {e}")
-            self._record(rel, "failed", detail=f"{type(e).__name__}: {e}"[:300])
+            # Translated, not raw: the library's own wording claimed a present file was
+            # missing and an unconfigured password was wrong. See `ex.describe_failure`.
+            why = ex.describe_failure(e, str(abs_path), passwords=passwords)
+            self.error_lines.append(f"FAIL\t{rel}\t{why}")
+            self._record(rel, "failed", detail=why[:300])
             return
         if isinstance(text, str) and text.startswith(ex.UNSUPPORTED_PREFIX):
             self._record(rel, "unsupported", detail=text[:120])

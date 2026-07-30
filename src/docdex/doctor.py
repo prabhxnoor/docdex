@@ -136,8 +136,19 @@ class Doctor:
                     f"rows={total} missing={missing} sha_mismatch={sha_mismatch}")
 
     def check_cache_coverage(self) -> None:
+        """Is every supported document's text actually extracted?
+
+        `skipped` is counted separately because it is docdex's own decision, not a
+        gap: `sync` declines files over `max_extract_mb` and says so in as many words
+        ("intentionally not extracted (too large) — not a gap"). This check had no
+        branch for it, so all 19 such files on the real 10.5k-file corpus fell through
+        to `missing` and turned a healthy corpus red. The cost was not just the false
+        alarm — while they sat in `missing`, that number could not tell anyone whether
+        a genuine gap had appeared beside them. Still reported, never hidden: those
+        documents really are unsearchable, which is the user's setting to change.
+        """
         statuses = read_extract_status(self.project)
-        supported = ok = empty = failed = missing = 0
+        supported = ok = empty = failed = missing = skipped = 0
         for rel in read_inventory(self.project.inventory_path):
             if not ex.is_supported(rel):
                 continue
@@ -149,12 +160,27 @@ class Doctor:
             elif st == "failed":
                 failed += 1
             elif cache.exists() and cache.stat().st_size > 0:
+                # Checked before `skipped`: a file the cap now excludes may still have
+                # a cache from before the cap changed, and that text IS searchable.
                 ok += 1
+            elif st == "skipped":
+                skipped += 1
             else:
                 missing += 1
-        self.record("cache coverage", failed == 0 and missing == 0,
-                    f"supported={supported} ok={ok} no-text={empty} "
-                    f"failed={failed} missing={missing}")
+        healthy = failed == 0 and missing == 0
+        detail = (f"supported={supported} ok={ok} no-text={empty} skipped={skipped} "
+                  f"failed={failed} missing={missing}")
+        if not healthy:
+            # A red check that does not say what to do next gets ignored, which is how
+            # this one went unexamined long enough to hide behind its own false alarm.
+            fixes = []
+            if missing:
+                fixes.append("`docdex sync --backfill` re-extracts anything with no cache")
+            if failed:
+                fixes.append(f"see {self.project.extract_status_path.name} for the "
+                             f"reason on each failed file")
+            detail += " — " + "; ".join(fixes)
+        self.record("cache coverage", healthy, detail)
 
     def check_orphan_caches(self) -> None:
         if not self.project.extracted_dir.exists():

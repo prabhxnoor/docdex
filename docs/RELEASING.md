@@ -71,6 +71,27 @@ And whatever the release makes newly detectable, add the check to `docdex doctor
 the same commit. A guarantee nobody can inspect is a guarantee nobody can trust —
 v0.5.4's index was empty for a day while every check reported PASS.
 
+### If the release prints advice, a test must follow that advice
+
+**Standard: for every message that tells the user to run something, one test puts the
+product in that state, runs exactly what the message says, and asserts the user is no
+longer stuck.** Asserting the message appears is not that test.
+
+v0.5.4 shipped the refusal and the instruction together: `search` and `doctor` both
+stopped calling an empty index "no matches" and printed *"run `docdex sync` to rebuild
+the index"*. The instruction could not work — the rebuild was gated on a document
+having changed, so a sync over an unchanged corpus left the index exactly as it was and
+printed the same instruction again. There was no flag to escape it. Every test asserted
+the refusal was correct; not one of them ran the remedy.
+
+That release ran the whole process — two external reviews, 35 findings, six gates — and
+none of it looked at this, because pass 1 reads the diff and pass 2 reads the tests.
+**Advice is a product surface.** Wrong advice is the same defect class as a wrong
+answer: confidently stated, impossible to check from the inside, and it costs the user
+their time rather than docdex's. The same goes for advice that is merely inapplicable —
+v0.5.5 nearly told users to put a password in `secrets.json` for an encrypted `.docx`,
+which docdex cannot use for anything but a PDF.
+
 ## 2. Fix it, and check what the fix cost
 
 Measure the cost of the fix on something real, not only the synthetic corpus.

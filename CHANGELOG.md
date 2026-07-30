@@ -10,9 +10,117 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Next: **v0.5.5** — reading a value that sits *before* its label ("Helios Components
+Next: **v0.5.6** — reading a value that sits *before* its label ("Helios Components
 Pvt Ltd **as the Vendor**"), the last form-filling gap; then optional embeddings /
 RRF via `DOCDEX_EMBED_CMD`. See [ROADMAP.md](ROADMAP.md).
+
+## [0.5.5] — 2026-07-30 — "Advice that works"
+
+**Three things docdex said about itself were untrue or impossible to act on.** All
+three were found while checking the previous release end to end on the real
+10.5k-file corpus, and the first one made v0.5.4's headline fix unreachable in the
+one situation it was written for.
+
+**In plain terms.** v0.5.4 taught docdex to stop answering "no matches" when its
+search index was actually empty — it now refuses, and prints *"run `docdex sync` to
+rebuild the index"*. That instruction did not work. The rebuild only ran when some
+document had changed, so a sync over an unchanged folder looked at an empty index,
+decided there was no work, and left it empty. Search printed the same instruction
+again, and no flag forced a rebuild — a loop with no way out, in exactly the state
+the message was written for.
+
+### Fixed
+
+- **A sync with nothing to do now repairs an index that cannot answer.** What
+  decides a rebuild is whether the index covers the stored text, not only whether
+  the corpus changed. Covers three broken states: nothing indexed, partly indexed
+  (a rebuild that stopped early — the dangerous one, because it still answers), and
+  one of the two term spaces empty (which silently degrades ranking instead of
+  failing). Deliberately *not* triggered when the index cannot be checked at all:
+  that would rebuild the whole corpus on every sync forever, and search already
+  refuses loudly in that case. A repair is reported, never silent — `sync` prints it
+  and `build()` returns `repaired`, because "reindexed 0" while both term spaces
+  were rebuilt from scratch is a false statement about work that happened.
+- **`doctor` no longer reports its own policy as a defect.** Files over the
+  `max_extract_mb` cap are skipped on purpose — `sync` says so in as many words —
+  but the coverage check had no branch for them, so all 19 such files on the real
+  corpus were counted as *missing caches* and turned a healthy corpus red. They are
+  now counted and shown as `skipped`, which is reported but not a failure. The
+  second cost was worse than the false alarm: while those 19 sat in `missing`, that
+  number could not tell anyone whether a genuine gap had appeared beside them.
+- **Extraction failures now say what is actually wrong.** A file that is present but
+  truncated reported `PackageNotFoundError: Package not found at '<path>'`, which
+  reads as "that file is missing"; an encrypted PDF with no password configured
+  reported `PDFPasswordIncorrect:` with an empty message, which reads as "docdex
+  tried a password and got it wrong". On the real corpus this hid the actual split —
+  six documents damaged on disk, four password-protected — behind wording that sent
+  the reader looking for a path problem. Damaged, encrypted-PDF and
+  encrypted-Office files are now each named, with the remedy that applies to each.
+  Note that a `secrets.json` password is only ever offered for a PDF, because that
+  is the only place docdex can use one.
+- **A red check now says what to do next.** `cache coverage` names
+  `sync --backfill` for missing caches and points at `extract_status.tsv` for
+  per-file reasons. A red check with no next step gets ignored, which is how this
+  one hid behind its own false alarm.
+
+### From adversarial review of this fix
+
+Two external passes, 41 findings, 33 fixed. Three changed the product beyond the three
+faults above:
+
+- **An encrypted `.xlsx` got no plain-English diagnosis at all.** openpyxl raises
+  `BadZipFile` where python-docx and python-pptx raise `PackageNotFoundError`, so a
+  protected workbook still reached the user as `BadZipFile: File is not a zip file`.
+  Every test written for this release used `.docx`.
+- **The damaged-file message asserted the file was present without checking.** A file
+  deleted between the inventory scan and extraction raises the same error, and the
+  message then stated the exact opposite of the filesystem.
+- **The Office message named `secrets.json`** — as a disclaimer that passwords there
+  work only for PDFs. Naming the file at all invites trying it, so it is gone.
+
+And two in the release gate that could have certified work it had not checked:
+
+- **An inherited `PYTEST_ADDOPTS="-k one_test"` would have reduced the suite to a single
+  test** while the gate reported a pass — it copies the environment, and the suite gate
+  only required "more than zero tests passed". Now scrubbed, with any deselection
+  reported. Verified: with the variable set, the gate still collects all 324.
+- **A file edited twice while the gate ran was invisible**, because its git status is
+  identical before and after — so the tests and the benchmarks could measure different
+  source. Contents are now hashed, not just statuses.
+
+The most useful finding was about the tests, not the code: **they never ran the command
+the advice names.** The helper composed the two sync steps by hand, so deleting the index
+build from the CLI would have left every test green while `docdex sync` stopped repairing
+anything. For a release whose entire subject is advice that works, that was the wrong
+shortcut. Two findings were refuted by measurement, and five real gaps are recorded in
+ROADMAP as debt rather than quietly dropped.
+
+### Why this was missed a day earlier
+
+v0.5.4 ran the full release process — two external adversarial reviews, 35 findings,
+a six-gate release gate. Pass 1 reviewed the diff, pass 2 reviewed the test suite,
+and the gate ran the suite. **Nobody asked whether the instruction the product prints
+resolves the state it is printed about.** The tests proved the refusal was correct;
+none of them followed the advice. `docs/RELEASING.md` now requires that check, and
+the regression tests are written that way — they follow the printed instruction and
+assert the user is no longer stuck.
+
+### Not a bug, for the record
+
+The semantic index showing fewer chunks than the keyword index was *not* drift. Both
+cut text identically; they discard scraps differently (the keyword index keeps
+anything over 3 characters, the semantic one drops trailing fragments under 40), so a
+one-chunk difference is by design. The larger gap seen on the real corpus was simply
+un-run work — the v0.5.4 repair was deliberately run with `--no-embed` to isolate the
+migration. A full `docdex sync` reconciled it.
+
+### Real corpus
+
+10.5k files, 92,507 chunks. Full six-step sync: **70s**, `reindexed 0` — the repair
+check costs three counting queries and correctly finds nothing to do on a healthy
+index. `doctor`: 8 passed, 1 failed, and that one failure is now honest — ten files
+docdex genuinely cannot read (six truncated on disk, four password-protected), with
+`missing=0` where it used to claim 19.
 
 ## [0.5.4] — 2026-07-30 — "The upgrade that broke the index"
 

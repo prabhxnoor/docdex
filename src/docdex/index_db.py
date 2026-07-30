@@ -275,7 +275,28 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
                     (rel, idx, start, end, tok.count_tokens(chunk), chunk,
                      1 if value_re.search(chunk) else 0))
 
-        if has_fts and (changed or removed):
+        reindex = bool(changed or removed)
+        repaired = False
+        if has_fts and not reindex:
+            # A sync with nothing to do used to leave a wiped or half-built index
+            # exactly as it found it — while `search` and `doctor` both tell the user
+            # to run `sync` to repair precisely that state. The advice was a dead end:
+            # no flag forces a lexical rebuild, so following it printed the same
+            # instruction again. What decides a rebuild is whether the index covers
+            # the text, not only whether the corpus changed.
+            #
+            # Deliberately NOT on `unverified`: a probe that cannot be answered would
+            # then rebuild the whole corpus on every sync forever, and search already
+            # refuses loudly in that state rather than calling it a miss.
+            state = index_state(conn)
+            repaired = bool(state["empty"] or state["incomplete"]
+                            or state["partial"] or state["missing"])
+            reindex = repaired
+            if repaired and not quiet:
+                print("Lexical index: text is stored but the index does not cover it; "
+                      "reindexing from caches")
+
+        if has_fts and reindex:
             # External-content FTS5: rebuild keeps the mirrors exactly in sync
             # without trigger bookkeeping. Fast at this scale and never drifts.
             conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
@@ -285,12 +306,18 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
 
         total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
         total_chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        # `repaired` is reported rather than inferred: `reindexed=0` while both mirrors
+        # were rebuilt from scratch is a false statement about work that happened, and
+        # a caller cannot tell the two apart from any other key here.
         result = {"fts": has_fts, "files": total_files, "chunks": total_chunks,
-                  "reindexed": len(changed), "removed": len(removed)}
+                  "reindexed": len(changed), "removed": len(removed),
+                  "repaired": repaired}
         if not quiet:
             engine = "FTS5/BM25" if has_fts else "no-FTS5 (fallback ranking)"
+            did = ("repaired: all chunks reindexed" if repaired
+                   else f"reindexed {len(changed)}")
             print(f"Lexical index: files={total_files} chunks={total_chunks} "
-                  f"engine={engine} (reindexed {len(changed)})")
+                  f"engine={engine} ({did})")
         return result
     except BaseException:
         # Includes KeyboardInterrupt: a sync interrupted halfway through a rebuild

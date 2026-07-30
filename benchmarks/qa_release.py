@@ -39,6 +39,7 @@ import atexit
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -84,7 +85,15 @@ def pytest_run(tree: Path, targets: list = None, env: dict = None) -> dict:
     if xml.exists():
         xml.unlink()
     cmd = [sys.executable, "-m", "pytest", "--tb=line", f"--junit-xml={xml}"]
-    proc = run(cmd + (targets or []), tree, env=env)
+    # Scrub pytest's environment channels. Found by adversarial review: `run()` copies
+    # os.environ, so an inherited PYTEST_ADDOPTS="-k one_test" would leave gate 1 with
+    # a single passing test — which satisfies "passed > 0" — and gate 3 with the one
+    # assertion it needs, while the rest of the suite never ran. The gate must decide
+    # what it runs; nothing in the operator's shell gets a vote.
+    scrubbed = {"PYTEST_ADDOPTS": "", "PYTEST_PLUGINS": "",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD": ""}
+    scrubbed.update(env or {})
+    proc = run(cmd + (targets or []), tree, env=scrubbed)
     out = {"returncode": proc.returncode, "assertion": [], "other": [],
            "errors": [], "total": 0, "passed": 0, "skipped": 0,
            "stdout": proc.stdout}
@@ -127,7 +136,44 @@ def pytest_run(tree: Path, targets: list = None, env: dict = None) -> dict:
     xml.unlink()
     for k in ("assertion", "other", "errors"):
         out[k] = sorted(set(out[k]))
+    # Deselection is invisible in the JUnit XML — a deselected test simply is not
+    # there, so `total` looks like the whole suite. Any source of it (an inherited
+    # flag the scrub missed, a `-k` in a config file, a conftest hook) is reported.
+    if " deselected" in proc.stdout:
+        line = next((ln for ln in proc.stdout.splitlines() if " deselected" in ln), "")
+        out["errors"].append(f"<tests were deselected: {line.strip()}>")
     return out
+
+
+def tree_digest(dirty_lines: list) -> str:
+    """A hash of the CONTENTS of everything not committed.
+
+    Gate 5 compares this before and after the run. Porcelain status alone cannot see a
+    dirty file edited twice — the status line is identical either way, while the suite
+    and the benchmarks read different source. Only uncommitted paths need hashing: what
+    is committed is pinned by the SHA the verdict already names.
+    """
+    h = hashlib.sha256()
+    for line in sorted(dirty_lines):
+        path = line[3:].strip().strip('"')
+        # A rename reads as `old -> new`; the destination is what exists now.
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        h.update(path.encode("utf-8", "replace") + b"\0")
+        target = REPO / path
+        try:
+            if target.is_file():
+                h.update(hashlib.sha256(target.read_bytes()).digest())
+            elif target.is_dir():
+                # An untracked DIRECTORY is reported as one entry; walk it.
+                for child in sorted(p for p in target.rglob("*") if p.is_file()):
+                    h.update(str(child.relative_to(REPO)).encode("utf-8", "replace"))
+                    h.update(hashlib.sha256(child.read_bytes()).digest())
+            else:
+                h.update(b"<absent>")
+        except OSError as exc:
+            h.update(f"<unreadable: {exc}>".encode("utf-8", "replace"))
+    return h.hexdigest()
 
 
 def _adjudication_ok(path: Path, version: str) -> bool:
@@ -143,7 +189,13 @@ def _adjudication_ok(path: Path, version: str) -> bool:
     if len(text.strip()) < 400:
         return False
     lowered = text.lower()
-    verdicts = sum(lowered.count(w) for w in
+    # "unconfirmed" and "not confirmed" both contain "confirmed", so counting the
+    # substring accepted a file saying every finding remained unadjudicated as though it
+    # carried a verdict for each. Found by adversarial review. Word-boundary matched,
+    # and the negations are removed first so they cannot masquerade as a verdict.
+    for negation in ("unconfirmed", "not confirmed", "unadjudicated"):
+        lowered = lowered.replace(negation, "")
+    verdicts = sum(len(re.findall(rf"\b{re.escape(w)}\b", lowered)) for w in
                    ("confirmed", "refuted", "not reproduced", "answered", "deferred"))
     return version in text and verdicts >= 1
 
@@ -197,6 +249,7 @@ def main() -> int:
     head_sha = run(["git", "rev-parse", "--short", "HEAD"], REPO).stdout.strip()
     dirty = [ln for ln in run(["git", "status", "--porcelain"], REPO).stdout.splitlines()
              if ln.strip()]
+    started_digest = tree_digest(dirty)
     print(f"QA gate: working tree at {head_sha} vs {args.base}")
     print("=" * 68)
 
@@ -289,7 +342,11 @@ def main() -> int:
     shutil.copytree(REPO / "benchmarks", base_tree / "benchmarks")
 
     # ------------------------------------------ gate 2: per-field, not headline
-    print(f"\n[2/6] benchmarks vs {args.base} — every suite, per case")
+    # "per case" was only ever true of suite B, which is compared field by field.
+    # Suite A is compared per method summary, so a lost fact offset by a newly found
+    # one leaves recall unchanged and passes. Naming it accurately here because the
+    # label was doing the arguing; the per-query fix is tracked in ROADMAP QA debt.
+    print(f"\n[2/6] benchmarks vs {args.base} — suite A per method, suite B per field")
     # Suite A (single-fact retrieval) is compared per method here too. It was
     # historically only recorded at v0.1.1, which is how a five-release blind spot
     # opened up; `bench_all.py` owns the measurement so both tools agree.
@@ -363,6 +420,17 @@ def main() -> int:
     if lost_honesty:
         failures.append(f"no longer reported honestly absent: {lost_honesty}")
         print(f"      REGRESSED honesty lost for: {lost_honesty}")
+    # Absolute, not only relative. Found by adversarial review: comparing HEAD against
+    # base means a field that BOTH sides answer wrongly produces no regression, so a
+    # standing "confidently wrong" answer passes the gate indefinitely for the sole
+    # reason that it is not new. Every field the benchmark plants as absent must be
+    # reported absent on HEAD, whatever base did.
+    import task_benchmark          # same sys.path insert as bench_all above
+    unhonest = sorted(set(task_benchmark.ABSENT) - set(hr.get("honest_absent", [])))
+    if unhonest:
+        failures.append(f"fields absent from the corpus are not reported absent on "
+                        f"HEAD: {unhonest} (a standing wrong answer is still wrong)")
+        print(f"      NOT HONESTLY ABSENT on HEAD: {unhonest}")
 
     # Tokens: coverage must not be bought with unbounded context.
     if br["tokens"] and hr["tokens"] > br["tokens"] * TOKEN_CEILING_RATIO:
@@ -386,7 +454,21 @@ def main() -> int:
         # Found by adversarial review: this used to be a note, so a release that
         # changed behaviour and added no test at all sailed through the gate whose
         # entire purpose is to require one. A waiver must be stated out loud.
-        if args.no_new_tests:
+        src_changed = sorted(
+            p for p in run(["git", "diff", "--name-only", f"{args.base}..HEAD"],
+                           REPO).stdout.split()
+            if p.startswith("src/") and p.endswith(".py"))
+        if args.no_new_tests and src_changed:
+            # Any non-empty string used to waive the only machine check that requires
+            # release-specific tests — including for a release that rewrote retrieval.
+            # Found by adversarial review. The waiver survives for docs/tooling-only
+            # releases, which is what it was actually for.
+            failures.append(
+                f"--no-new-tests cannot waive gate 3 when product code changed: "
+                f"{src_changed}. The waiver is for releases that touch no `src/` "
+                f"file; this one does, so it needs a test that discriminates.")
+            print(f"      WAIVER REFUSED — product code changed: {src_changed}")
+        elif args.no_new_tests:
             notes.append(f"gate 3 WAIVED by --no-new-tests: {args.no_new_tests}")
             print(f"      WAIVED — {args.no_new_tests}")
         else:
@@ -465,9 +547,16 @@ def main() -> int:
     # gate itself dirtied, and only those that were clean when it started, so a
     # pre-commit run never discards the operator's own edits. Without this the check
     # below fires on the gate's own output; it caught precisely that on first run.
-    was_dirty = {ln[3:].strip() for ln in dirty}
+    # What must never be clobbered is an edit the operator had NOT staged, because
+    # `git checkout --` would destroy it. A merely STAGED bench output is safe to
+    # restore: checkout reads from the index, so the staged content is exactly what
+    # comes back. Keying on "dirty at all" instead refused to restore anything staged
+    # and then failed the run below on the gate's own benchmark output — `M ` became
+    # `MM` on the same path, so it reported "14 -> 14 path(s) changed", which reads as
+    # a broken gate. Porcelain column 2 is the worktree half of the status.
+    unstaged_at_start = {ln[3:].strip() for ln in dirty if len(ln) > 1 and ln[1] != " "}
     restorable = [p for p in BENCH_OUTPUTS
-                  if p not in was_dirty and (REPO / p).exists()]
+                  if p not in unstaged_at_start and (REPO / p).exists()]
     if restorable:
         run(["git", "checkout", "--"] + restorable, REPO)
 
@@ -476,9 +565,22 @@ def main() -> int:
     dirty_now = [ln for ln in run(["git", "status", "--porcelain"], REPO).stdout.splitlines()
                  if ln.strip()]
     if dirty_now != dirty:
+        # Name the paths. A count-only message ("14 -> 14") cannot describe a status
+        # change on an unchanged set of paths, which is the common case.
+        moved = sorted(set(dirty_now).symmetric_difference(dirty))
         failures.append(f"the working tree changed while the gate ran "
                         f"({len(dirty)} -> {len(dirty_now)} path(s)); nothing it "
-                        f"reported describes a single fixed tree")
+                        f"reported describes a single fixed tree. Differing status "
+                        f"line(s): {'; '.join(m.strip() for m in moved[:6])}")
+    elif tree_digest(dirty) != started_digest:
+        # Status lines alone cannot see a dirty file edited AGAIN while the gate ran:
+        # `M  src/docdex/index_db.py` before and after, different contents in between,
+        # so the tests and the benchmarks measured different source. Found by
+        # adversarial review. Content is hashed, not just the status.
+        failures.append(
+            "a file's CONTENTS changed while the gate ran without changing its git "
+            "status, so the suite and the benchmarks did not necessarily measure the "
+            "same source. Re-run on a settled tree.")
     if dirty_now:
         # Found by adversarial review: a pass on a dirty tree named HEAD's SHA, so
         # tagging that SHA could ship the committed bug while the fix sat uncommitted.
