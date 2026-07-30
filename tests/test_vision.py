@@ -44,9 +44,23 @@ def test_notes_become_searchable_after_sync(synced):
     assert hits and hits[0][1] == rel
 
 
-def test_done_sources_drop_from_next_queue(synced):
+def test_done_sources_are_not_offered_again(synced):
+    """Finished work must never be handed out a second time.
+
+    This used to be asserted as "the row disappears from the manifest", and dropping
+    the row is what made the queue unable to count: `queue_status` looked for rows
+    whose note already existed, and by construction there were none, so `done` was
+    structurally always 0 while the total shrank as work got finished. On the real
+    corpus 1,041 completed notes read as `0/1896 done`. The row now stays and says
+    `done` — the same guarantee (never re-offered) with a total that means something.
+    """
     vision.create_queue(synced, quiet=True)
     note = vision.note_path_for(synced, "diagram.png")
     note.write_text("# Vision/OCR note\nSource: diagram.png\n", encoding="utf-8")
     vision.create_queue(synced, quiet=True)
-    assert "diagram.png" not in queue_rows(synced)
+
+    row = queue_rows(synced).get("diagram.png")
+    assert row is not None, "the finished task vanished from the manifest"
+    assert row["status"] == "done", row
+    pending = [p for p, r in queue_rows(synced).items() if r["status"] == "pending"]
+    assert "diagram.png" not in pending, pending

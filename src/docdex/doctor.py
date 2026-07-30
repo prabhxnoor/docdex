@@ -121,7 +121,17 @@ class Doctor:
         return ok
 
     def check_rows_on_disk(self, no_sha: bool) -> None:
-        missing = sha_mismatch = total = 0
+        """Every row's file must exist; a 1-in-50 sample also has its hash verified.
+
+        `sha_checked` is reported because the line used to read
+        `rows=11880 missing=0 sha_mismatch=0`, which anyone would take to mean every
+        file had been verified — while about 237 of them had. This project's whole
+        claim is that it never says more than it checked, and a sampled check that
+        renders like an exhaustive one breaks that in the health command itself. The
+        sample size is now on the line, so `sha_mismatch=0` can be read for what it
+        is. Checking every row is `doctor --deep`'s job (tracked, not yet built).
+        """
+        missing = sha_mismatch = total = sha_checked = 0
         for rel, row in read_inventory(self.project.inventory_path).items():
             total += 1
             abs_path = self.project.root / rel
@@ -130,10 +140,16 @@ class Doctor:
                 continue
             if no_sha or not row.get("sha1") or total % 50 != 0:
                 continue
+            sha_checked += 1
             if sha1_of(abs_path) != row["sha1"]:
                 sha_mismatch += 1
+        detail = (f"rows={total} missing={missing} sha_checked={sha_checked} "
+                  f"sha_mismatch={sha_mismatch}")
+        if sha_checked < total:
+            detail += (f" — hashes verified on a {sha_checked}-row sample, not all "
+                       f"{total}")
         self.record("inventory matches disk", missing == 0 and sha_mismatch == 0,
-                    f"rows={total} missing={missing} sha_mismatch={sha_mismatch}")
+                    detail)
 
     def check_cache_coverage(self) -> None:
         """Is every supported document's text actually extracted?

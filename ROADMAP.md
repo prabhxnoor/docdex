@@ -6,7 +6,27 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-07-30 (SHIPPED **v0.5.5 "Advice that works"** — three things
+> _Last updated: 2026-07-30 (SHIPPED **v0.5.6 "Ten things nobody had looked at"** —
+> the first release driven by reviewing the whole product instead of the last change,
+> which is why nine of its ten defects had sat in place for several releases. Two gave
+> wrong answers on the real corpus: `--folder` went into a SQL `LIKE` unescaped, so
+> `--folder "1. Audited_Financials"` also returned an unrelated tree's
+> `1. Audited Financials`; and documents reached *through* a declared synonym were then
+> judged and labelled as if the synonym had never applied, because three different
+> rules answered "did this query ask for an alias". Four more were docdex saying untrue
+> things about itself — manufactured conflicts between unrelated facts, an OCR queue
+> whose `done` count could never be non-zero while its total shrank as work finished,
+> `covid19` read as an identifier, and a health check that hashed one file in fifty
+> while printing a line that read as "all verified". Plus `sync --no-hash` leaving the
+> index permanently stale (search answering with deleted text), four of six sync stages
+> running unlocked, one failing stage cancelling the rest, and an embedding-model swap
+> silently mixing two vector spaces. 65 review findings across three passes: 26 fixed,
+> 4 refuted by measurement, 35 tracked below. 387 tests, up from 324. Both benchmarks
+> unchanged. Two findings are deliberately NOT closed and say so: a genuine conflict
+> phrased two ways is now missed, and `has_value` is still close to "contains a digit"
+> because it is computed per 1,800-character chunk.)_
+>
+> _Previously: 2026-07-30 (SHIPPED **v0.5.5 "Advice that works"** — three things
 > docdex said about itself were untrue or impossible to act on, all found while
 > checking v0.5.4 end to end on the real corpus. The worst made v0.5.4's own fix
 > unreachable: `search` refused an empty index and told the user to run `docdex sync`,
@@ -349,18 +369,19 @@ are what remain, and they are **v0.5.2 ← next**.
   label present anywhere always decides.
 - ⬜ **Apposition: a value written BEFORE its label** — "Helios Components Pvt Ltd
   **as the Vendor**", "Acme (the **Supplier**)". The standard way contracts name a
-  party, and the benchmark's last miss (`Legal name`). **→ v0.5.6** (v0.5.4 went to
-  repairing the schema-upgrade regression, and v0.5.5 to the three false or
-  unactionable things that repair turned out to be saying). Needs a required
+  party, and the benchmark's last miss (`Legal name`). **→ v0.5.7** (v0.5.4 went to
+  repairing the schema-upgrade regression, v0.5.5 to the three false or unactionable
+  things that repair turned out to be saying, and v0.5.6 to the ten defects a
+  whole-product review found once someone finally looked past the last diff). Needs a required
   connective, a bounded lookback and a clause-boundary stop: unbounded backwards
   reading is the DDX-029 cross-field leakage class ("Payment terms are net-45.
   Vendor: Acme" would hand `net-45` to `Legal name`), so it gets its own change and
   its own review rather than riding along with something else.
 - ⬜ **Optional embeddings / RRF** via `DOCDEX_EMBED_CMD` (local-only) for pure
   paraphrase and folder discovery — exact IDs, amounts, dates, and missing-evidence
-  honesty stay lexical/structured. **→ v0.5.7** (was v0.5.1, which the precision fix took,
-  then pushed by the Spotlight fix, the schema-upgrade repair, its follow-up, and
-  apposition); off by
+  honesty stay lexical/structured. **→ v0.5.8** (was v0.5.1, which the precision fix took,
+  then pushed by the Spotlight fix, the schema-upgrade repair, its follow-up, the
+  whole-product review, and apposition); off by
   default, needs a local embedder. Note v0.5.1 already built the
   two-ranking fusion plumbing this will extend — a vector ranking becomes a third
   input to the same merge.
@@ -717,6 +738,56 @@ not oversights — each was reproduced or reasoned about, none is fixed):
   bytes across hash seeds, but the fixture never produces the large blocks of
   equal-scoring chunks where set-iteration order would actually show. Needs a stress
   corpus of hundreds of tied chunks across several queries.
+
+**Raised by the v0.5.6 whole-product review and deliberately deferred** (65 findings
+across three passes — see `docdex-qa/v0.5.6/ADJUDICATION.md`; 26 fixed, 4 refuted by
+measurement, these tracked). None is a known wrong answer on the current corpus; each
+is a way a future one could go unnoticed:
+
+- ⬜ **Conflict identity needs a field label, not neighbouring words.** v0.5.6 groups a
+  value by the words on either side of it, which fixes fabricated conflicts but now
+  MISSES a genuine one phrased two ways: `revenue was 5 crore` against `revenue totaled
+  9 crore` — `was` is a function word and `totaled` is not, so the keys differ. Both
+  values are still shown as evidence; what is lost is the explicit disagreement. Wants
+  a real field-label extraction, the same machinery apposition (v0.5.7) needs.
+- ⬜ **`has_value` is still ≈ "contains a digit".** Excluding document numbering moved
+  519 of 92,526 real chunks (96.6% → 96.0%; agreement with "contains a digit" 99.96% →
+  99.40%). The pattern is not the problem — the flag is computed per 1,800-character
+  chunk, and almost any chunk that size contains some genuine number. A sharper signal
+  needs a window around the candidate label, not the whole chunk.
+- ⬜ **OCR notes carry no identity for their source.** Editing a scanned file leaves its
+  old note — and its old OCR text — counted as current and searchable, because
+  completion is keyed on the note's existence alone. Pre-existing. Needs the source's
+  hash written into the note and compared when the queue is rebuilt.
+- ⬜ **The semantic index and its manifest are two separate replacements.** A crash
+  between them leaves a manifest describing records the index does not contain, and the
+  incremental reuse path then trusts it. Raised independently by both review passes.
+  Wants one atomic swap (a versioned directory plus a pointer), not two `os.replace`
+  calls.
+- ⬜ **An embedding model can change behind an unchanged command.** v0.5.6 fingerprints
+  `DOCDEX_EMBED_CMD`, which catches a changed command but not a changed model *behind*
+  the same command. Hashing the command is what can be known cheaply and portably; the
+  limit is documented rather than implied away. A real fix needs the embedder to report
+  its own model identity.
+- ⬜ **Gate 2 still compares suite A per method, not per query**, and treats a changed
+  source attribution as a note rather than a failure — so a lost fact offset by a newly
+  found one passes, and a correct value can arrive with the wrong provenance. Raised for
+  the second release running; needs per-query expectations plumbed through the harness.
+- ⬜ **The benchmark oracle is not independently pinned.** v0.5.6 fails the release if
+  the harness files changed since the base, which is a guard, not a solution: the
+  harness is still the same code on both sides of the comparison. Wants oracle
+  self-tests over near-miss IDs, amounts, dates and sources.
+- ⬜ **No golden corpus of real document structures.** Release tests use small Markdown,
+  PNG and synthetic PDF fixtures, so a regression that ignored an `.xlsx` second sheet,
+  `.docx` text boxes, merged cells, a right-hand PDF column, or OCR text past a chunk
+  boundary would pass everything. Wants a compact corpus with exact expected literals.
+- ⬜ **No scale or platform coverage.** Order-dependent ranking above ~10,000 tied
+  files, SQLite parameter limits at large candidate counts, and macOS-versus-Linux FTS
+  differences are all invisible to a small single-environment suite.
+- ⬜ **Determinism is certified from one fixture and one clock.** Gate 4 hashes one
+  corpus and query, so nondeterminism confined to alias expansion, tied scores,
+  conflicts, folder filtering or truncation boundaries would not show; and all runs
+  share a wall clock, so a new date dependence passes today and breaks tomorrow.
 
 **Raised by the v0.5.5 review and deliberately deferred** (each reproduced by
 measurement — see `docdex-qa/v0.5.5/ADJUDICATION.md` — and each pre-existing, not

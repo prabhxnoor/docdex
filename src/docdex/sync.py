@@ -11,6 +11,7 @@ separately from real cache gaps — they are vision/OCR candidates, not errors.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -96,6 +97,46 @@ def release_lock(project: Project) -> None:
         project.lock_path.unlink()
     except OSError:
         pass
+
+
+def _lock_is_mine(project: Project) -> bool:
+    """Was the lock on disk written by THIS process?
+
+    Lets an outer command hold the lock for a whole multi-stage run while the inner
+    `run_sync` recognises it and neither re-acquires nor releases it. A second
+    *process* still sees the lock and is refused, which is the point.
+    """
+    try:
+        info = json.loads(project.lock_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (isinstance(info, dict)
+            and info.get("host") == socket.gethostname()
+            and info.get("pid") == os.getpid())
+
+
+@contextlib.contextmanager
+def sync_lock(project: Project):
+    """Hold the sync lock for an ENTIRE run, not just its first stage.
+
+    `run_sync` used to take the lock and release it in its own `finally`, after which
+    the CLI ran four more stages unprotected: the lexical index rebuild, the context
+    dumps, the semantic index and the vision queue. Two syncs overlapping past that
+    point both rebuilt the FTS mirrors and both replaced the semantic index — and
+    since the semantic index and its manifest are two separate replacements, the
+    manifest can end up describing lines the index does not contain, after which the
+    incremental reuse path trusts it. Nearly happened for real: one session held the
+    lock while another was still in stage 2.
+    """
+    ensure_state_dirs(project)
+    if not acquire_lock(project):
+        raise SyncLocked(
+            "another sync appears to be running. If you're sure none is, "
+            f"delete the lock file: {project.lock_path}")
+    try:
+        yield
+    finally:
+        release_lock(project)
 
 
 def cache_has_text(dest: Path) -> bool:
@@ -208,7 +249,10 @@ def stale_topical_report(changed_paths, project: Project) -> dict:
 def run_sync(project: Project, dry_run: bool = False, no_hash: bool = False,
              no_extract: bool = False, backfill: bool = False,
              allow_large: bool = False, quiet: bool = False) -> dict:
-    if not dry_run:
+    # An outer `sync_lock` (the CLI holds one for the whole run) is recognised rather
+    # than fought with, and is left for its owner to release.
+    caller_holds_lock = not dry_run and _lock_is_mine(project)
+    if not dry_run and not caller_holds_lock:
         ensure_state_dirs(project)
         if not acquire_lock(project):
             raise SyncLocked(
@@ -321,7 +365,7 @@ def run_sync(project: Project, dry_run: bool = False, no_hash: bool = False,
             _write_last_run(project, totals)
         return totals
     finally:
-        if not dry_run:
+        if not dry_run and not caller_holds_lock:
             release_lock(project)
 
 

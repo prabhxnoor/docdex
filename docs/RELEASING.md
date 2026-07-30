@@ -129,6 +129,45 @@ two of codex's suggested corpora exposed *real* bugs instead.
 `codex` runs on a limited plan. One combined pass at `xhigh` per release, on the
 highest-risk surface. Never per-commit.
 
+### Review the product, not only the diff
+
+Both passes above are scoped to what the release changed, so nothing in this process
+was ever going to ask *"what else is wrong?"*. That gap has a measured cost: an
+external whole-product review of v0.5.5 returned **ten** defects, **nine of which
+predated the release** and two of which were returning wrong answers on the real
+corpus. Five releases of careful diff review could not have found them, because none
+of them was in a diff.
+
+So: **at least every fifth release, review the whole product instead of the change.**
+Point the reviewer at the source tree rather than a diff and ask what is wrong with
+it. Track the round in `docdex-qa/vX/` like any other.
+
+Two things make the results usable rather than a wall of noise:
+
+- **Measure exposure on the real corpus, not just reproducibility in a fixture.** Both
+  live findings looked theoretical until they were run against the real corpus: 96 real
+  folder names contain `_`, and a natural paraphrase pulled in 8 contracts through a
+  synonym that was then labelled as an exact match. Two other findings reproduced in a
+  fixture but provably cannot fire on the real corpus, and saying so is part of the
+  adjudication.
+- **Say plainly which half of a finding you fixed.** v0.5.6 fixed the `re.I` defect in
+  the value pattern and barely moved the "signal is too weak" half — 519 chunks out of
+  92,526. Both went in the changelog. A finding recorded as closed when it is half
+  closed is a lie told to the next reader, who will be you.
+
+### Declare which test proves which fix
+
+Gate 3 used to accept **one** failing assertion as evidence for a release claiming any
+number of fixes, so nine untested fixes could ride behind one valid test. Every release
+now writes `docdex-qa/vX/FIXED_BY.tsv` — one row per claimed fix, naming the test that
+proves it — and the gate runs each of those tests against the previous release and
+fails the release for any that does not fail there on an assertion.
+
+A row may name `-` instead of a test, for a fix that genuinely cannot discriminate
+against the previous release (typically a defect *introduced* by this release and
+caught in its own review). That needs a stated reason in the third column. The gate
+prints those rows; it cannot judge them, so they are for the reader.
+
 ## 4. Benchmark every suite, every release
 
 **Standard: `bench_all.py record` before every release.** It runs *both* suites and

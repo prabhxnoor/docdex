@@ -144,29 +144,46 @@ def create_queue(project: Project, quiet: bool = False) -> dict:
     statuses = read_extract_status(project)
     rows = []
     for rel in read_inventory(project.inventory_path):
-        if rel in done or rel.startswith(notes_prefix) or rel in scaffold:
+        if rel.startswith(notes_prefix) or rel in scaffold:
             continue
         if statuses.get(rel, {}).get("status") == "skipped":
             continue  # too large to extract — not a vision/OCR candidate
         ext = Path(rel).suffix.lower()
+        # A finished row needs no assets copied — its note already exists, and on the
+        # real corpus that copying is 6.6 GB of images. Candidacy is still decided, so
+        # the row can be listed; for a .pptx the existing note is itself the evidence
+        # that it was a candidate, which saves re-opening the package.
+        finished = rel in done
 
         reason = ""
         assets = []
         if ext in IMAGE_EXTS:
             reason = "image-file"
-            assets = _copy_image(project, rel)
+            if not finished:
+                assets = _copy_image(project, rel)
         elif ext == ".pptx":
-            assets = _extract_pptx_images(project, rel)
-            if assets:
+            if finished:
                 reason = "ppt-embedded-images"
+            else:
+                assets = _extract_pptx_images(project, rel)
+                if assets:
+                    reason = "ppt-embedded-images"
         elif ext == ".pdf" and _is_low_text(project, rel):
             reason = "pdf-low-or-no-text"
         elif ex.is_supported(rel) and _is_low_text(project, rel):
             reason = "file-low-or-no-text"
         if not reason:
             continue
+        # Finished rows STAY in the manifest, marked done.
+        #
+        # They used to be dropped, which made the queue lie in two directions at
+        # once. `queue_status` counted rows whose note already existed — of which,
+        # by construction, there were now none — so `done` could never be anything
+        # but 0. And the total shrank as work got finished, so on the real corpus
+        # 1,041 completed notes read as "0/1896 done": no credit for the work, and
+        # no way to see how much of the job was left.
         rows.append({
-            "status": "pending",
+            "status": "done" if finished else "pending",
             "reason": reason,
             "path": rel,
             "assets": ";".join(project.rel_to_root(p) for p in assets),
@@ -180,11 +197,14 @@ def create_queue(project: Project, quiet: bool = False) -> dict:
         writer.writerows(rows)
     (project.vision_dir / "VISION_TASKS.md").write_text(PROMPT_TEMPLATE, encoding="utf-8")
 
+    done_rows = sum(1 for r in rows if r["status"] == "done")
+    pending = len(rows) - done_rows
     if not quiet:
-        print(f"Vision queue: {len(rows)} pending tasks")
+        print(f"Vision queue: {pending} pending, {done_rows} done "
+              f"({len(rows)} tasks)")
         print(f"  manifest: {project.rel_to_root(manifest_path(project))}")
         print(f"  notes go to: {project.rel_to_root(project.notes_dir)}/")
-    return {"pending": len(rows)}
+    return {"pending": pending, "done": done_rows, "total": len(rows)}
 
 
 def queue_status(project: Project, quiet: bool = False) -> dict:
@@ -193,14 +213,31 @@ def queue_status(project: Project, quiet: bool = False) -> dict:
         if not quiet:
             print("Vision queue: not created yet (run `docdex vision create`)")
         return {"total": 0, "done": 0, "pending": 0, "exists": False}
+    # Done is decided by the NOTE on disk, never by the manifest's own status column.
+    # The note is the deliverable; the manifest is a cache of what was true when it
+    # was written. Counting `status == "done"` as well meant deleting a note left the
+    # queue reporting finished work that no longer existed, and not re-offering it.
+    # Reading the note also means work finished since the last sync counts at once.
     done_sources = existing_note_sources(project)
     total = done = 0
+    queued = set()
     with open(mpath, "r", encoding="utf-8", newline="") as f:
         for row in csv.DictReader(f, delimiter="\t"):
             total += 1
+            queued.add(row.get("path"))
             if row.get("path") in done_sources:
                 done += 1
-    result = {"total": total, "done": done, "pending": total - done, "exists": True}
+    # Notes whose source is no longer a queue row: the document was deleted, went over
+    # the size cap, or started extracting real text and stopped being an OCR candidate.
+    # Reported rather than dropped, so this count and `doctor`'s "N note(s) indexed"
+    # add up. On the real corpus they differed by 208 with nothing explaining it, and
+    # two true numbers that look like a contradiction cost the reader the same trust as
+    # one false one.
+    outside = len(done_sources - queued)
+    result = {"total": total, "done": done, "pending": total - done,
+              "notes_outside_queue": outside, "exists": True}
     if not quiet:
-        print(f"Vision queue: total={total} done={done} pending={total - done}")
+        extra = (f"  (+{outside} finished note(s) for documents no longer queued)"
+                 if outside else "")
+        print(f"Vision queue: total={total} done={done} pending={total - done}{extra}")
     return result

@@ -99,32 +99,76 @@ def cmd_sync(args: argparse.Namespace) -> int:
     from docdex import index_db
     from docdex import prefetch as prefetchmod
     from docdex import semantic, vision
-    from docdex.sync import SyncLocked, run_sync
+    from docdex.sync import SyncLocked, run_sync, sync_lock
     project = _project(args)
-    if not args.no_prefetch and not args.dry_run:
-        print("[1/6] cloud prefetch")
-        prefetchmod.run_prefetch(project, quiet=True)
-    print("[2/6] sync inventory + text caches")
+
+    if args.dry_run:
+        print("[1/6] cloud prefetch (skipped: dry run)")
+        print("[2/6] sync inventory + text caches")
+        try:
+            run_sync(project, dry_run=True, no_hash=args.no_hash,
+                     no_extract=args.no_extract, backfill=args.backfill,
+                     allow_large=args.allow_large_text)
+        except SyncLocked as e:
+            raise SystemExit(f"docdex: {e}")
+        return 0
+
+    # Stages 3-6 do not depend on each other, so one failing stage must not cancel
+    # the rest — and must be named, not swallowed. A single exception out of the
+    # index build used to skip the dumps, the embeddings AND the vision queue, which
+    # is how one migration bug left the vision queue and the dumps frozen for a day:
+    # the failure was real, its consequences were invisible, and nothing in the
+    # output said which parts of the run had not happened.
+    failures: list[tuple[str, BaseException]] = []
+
+    def stage(number: int, name: str, fn, enabled: bool = True) -> bool:
+        if not enabled:
+            return True
+        print(f"[{number}/6] {name}")
+        try:
+            fn()
+            return True
+        except Exception as e:                    # noqa: BLE001 - reported, not hidden
+            failures.append((name, e))
+            print(f"  ! {name} FAILED: {type(e).__name__}: {e}", file=sys.stderr)
+            return False
+
     try:
-        run_sync(project, dry_run=args.dry_run, no_hash=args.no_hash,
-                 no_extract=args.no_extract, backfill=args.backfill,
-                 allow_large=args.allow_large_text)
+        with sync_lock(project):
+            stage(1, "cloud prefetch",
+                  lambda: prefetchmod.run_prefetch(project, quiet=True),
+                  enabled=not args.no_prefetch)
+            # Stage 2 is the one prerequisite: everything downstream reads the
+            # inventory and caches it writes, so a failure here stops the run
+            # instead of producing four more failures that all say the same thing.
+            if not stage(2, "sync inventory + text caches",
+                         lambda: run_sync(
+                             project, dry_run=False, no_hash=args.no_hash,
+                             no_extract=args.no_extract, backfill=args.backfill,
+                             allow_large=args.allow_large_text)):
+                print("\nstopped: the inventory could not be synced, so the stages "
+                      "that read it were not attempted.", file=sys.stderr)
+                return 1
+            stage(3, "lexical index (sqlite/fts5)",
+                  lambda: index_db.build(project), enabled=not args.no_fts)
+            stage(4, "context dumps",
+                  lambda: dumpsmod.build_dumps(project, quiet=True),
+                  enabled=not args.no_dumps)
+            stage(5, "semantic index",
+                  lambda: semantic.build(project), enabled=not args.no_embed)
+            stage(6, "vision/OCR queue",
+                  lambda: vision.create_queue(project, quiet=True),
+                  enabled=not args.no_vision)
     except SyncLocked as e:
         raise SystemExit(f"docdex: {e}")
-    if args.dry_run:
-        return 0
-    if not args.no_fts:
-        print("[3/6] lexical index (sqlite/fts5)")
-        index_db.build(project)
-    if not args.no_dumps:
-        print("[4/6] context dumps")
-        dumpsmod.build_dumps(project, quiet=True)
-    if not args.no_embed:
-        print("[5/6] semantic index")
-        semantic.build(project)
-    if not args.no_vision:
-        print("[6/6] vision/OCR queue")
-        vision.create_queue(project, quiet=True)
+
+    if failures:
+        print(f"\n{len(failures)} of 6 stages failed — the rest completed:",
+              file=sys.stderr)
+        for name, e in failures:
+            print(f"  - {name}: {type(e).__name__}: {e}", file=sys.stderr)
+        print("`docdex doctor` reports what state is usable.", file=sys.stderr)
+        return 1
     print("\ndone. `docdex status` for a summary.")
     return 0
 

@@ -24,17 +24,94 @@ from docdex import aliases as al
 
 # Lines that look like they carry a concrete value are the best "likely answer"
 # candidates. Conservative on purpose — the agent confirms; we only surface.
+#
+# Case sensitivity is per branch, NOT global. A global `re.I` used to be applied to
+# the whole pattern, which quietly defeated the ID-ish branch's own `[A-Z0-9]`
+# character class: `covid19`, `windows10` and `section2b` were all read as
+# identifiers. Units and month names still need to match in any case, so they say so
+# themselves with a scoped `(?i:...)`.
+# Alternative ORDER decides what gets extracted, because the first alternative that
+# matches at a position wins. Longest-and-most-specific first, therefore:
+#
+#   - Emails before everything: `user123@x.com` used to yield the bare `123`.
+#   - Identifiers before bare numbers: `29ABCDE1234F1Z5` — a GSTIN — used to yield
+#     `29`, so a conflict entry displayed "29" as the value. Exactly the bug v0.5.0
+#     fixed for dates (`31/12/2026` extracting as `31`), left standing one branch
+#     lower. Found while making this test assert the whole match rather than
+#     truthiness.
+#
+# The unit is inside its own optional group, `(?:\s*UNIT)?`, not `\s*UNIT?`. Written
+# the second way the `\s*` applied whether or not a unit followed, so every value at
+# the end of a phrase carried a trailing space into the extracted string.
+_UNIT = r"(?i:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)"
+_MONTH = r"(?i:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-zA-Z]*"
 VALUE_RE = re.compile(
-    r"(-?\s?[₹$€£]\s?\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
+    r"([\w.+-]+@[\w-]+\.[\w.-]+)"                      # emails
+    rf"|(-?\s?[₹$€£]\s?\d[\d,]*\.?\d*(?:\s*{_UNIT})?)"
     r"|(\b\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}\b)"
     r"|(\b\d{4}[/\-]\d{1,2}[/\-]\d{1,2}\b)"
-    r"|(\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4}\b)"
-    r"|(-?\d[\d,]*\.?\d*\s*(?:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)?)"
-    r"|(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d+)"
-    r"|([A-Z0-9]{6,}\d|[0-9]{2}[A-Z]{4,})"            # ID-ish tokens
-    r"|([\w.+-]+@[\w-]+\.[\w.-]+)",                    # emails
-    re.I,
+    rf"|(\b\d{{1,2}}\s+{_MONTH}\s+\d{{2,4}}\b)"
+    rf"|(\b{_MONTH}\s+\d+)"
+    r"|([A-Z0-9]{6,}\d|[0-9]{2}[A-Z]{4,})"            # ID-ish tokens (case-SENSITIVE)
+    rf"|(-?\d[\d,]*\.?\d*(?:\s*{_UNIT})?)",
 )
+
+# Words that introduce a NUMBER used to locate something in a document rather than
+# to state a fact about the world. "Clause 4", "section 12" and "page 3" answer no
+# question a form field could ask.
+#
+# `has_value` exists to break ranking ties toward a chunk that can actually answer.
+# Measured on the real 10.5k-file corpus it was true for 96.6% of chunks, and on a
+# 4,000-chunk sample it agreed with "does this text contain a digit" 4,000 times out
+# of 4,000 — so it barely discriminated at all. Excluding structural numbering is a
+# narrow, explainable correction: it removes exactly the matches that point at a
+# place in a document, and leaves every match that states an amount, date, rate,
+# identifier or address.
+# Deliberately narrow: only words that unambiguously introduce a document location.
+# "version", "part" and a bare "a"/"q" were considered and left out — "version 2" can
+# be the answer to a real question, and "a" precedes far too much to be a safe signal.
+#
+# `no`, `nos`, `sr` and `serial` were in this list and had to come OUT: in
+# "Invoice No. 42", "PO No. 7781" and "Serial No. 90210" the number IS the answer, and
+# suppressing it costs the value-bearing tie-break exactly where a form field wants
+# it. Found by adversarial review. Treating a stray "No. 5" cross-reference as a value
+# is much the cheaper mistake — it spends a tie-break, it does not hide evidence.
+_STRUCTURAL_REF = re.compile(
+    r"(?i:\b(?:clause|section|sec|article|art|para|paragraph|page|pg|item|figure|fig"
+    r"|table|annex|annexure|appendix|exhibit|schedule|chapter|chap|note|step|point"
+    r"|rule)\.?\s*)$")
+
+# A match that is nothing but a number: no currency symbol, no unit or scale word, no
+# date delimiter, no letters, no `@`. Only these are ambiguous enough to need their
+# introducing word checked — "5 crore", "12%", "₹4.2", "31/12/2026" and
+# "PO4400182" state a value wherever they appear.
+#
+# Trailing sentence punctuation is part of the match — `\.?\d*` absorbs the full stop
+# in "page 3." — so it is stripped before this test. Without that, every number ending
+# a sentence failed the plain-number test, counted as a non-plain value, and skipped
+# the structural check altogether: the suppression silently did not apply wherever a
+# sentence ended. Found while adjudicating a neighbouring review finding.
+_PLAIN_NUMBER = re.compile(r"^-?\s?\d[\d,]*(?:\.\d+)?$")
+
+
+def _plain_number(token: str) -> bool:
+    return bool(_PLAIN_NUMBER.match(token.strip().rstrip(".,;:")))
+
+
+def carries_value(text: str) -> bool:
+    """Does `text` state a value, as opposed to merely containing a number?
+
+    True when at least one `VALUE_RE` match is not a structural reference — a bare
+    number introduced by a word like "clause", "section" or "page". A chunk whose
+    only numbers locate parts of a document answers nothing, so flagging it as
+    value-bearing spends the ranking tie-break on a chunk that cannot help.
+    """
+    for m in VALUE_RE.finditer(text):
+        if not _plain_number(m.group(0)):
+            return True          # currency, unit, date, month, identifier or email
+        if not _STRUCTURAL_REF.search(text[max(0, m.start() - 24):m.start()]):
+            return True
+    return False
 STOPWORDS = {
     "the", "and", "for", "with", "from", "this", "that", "all", "any", "our",
     "fill", "find", "form", "please", "using", "about", "what", "which", "name",
@@ -96,11 +173,9 @@ def _candidates(project: Project, query: str, folder: Optional[str],
     # the whole candidate set and its scores — is byte-identical to before.
     search_query = query
     if alias_groups:
-        qstems = stemmed(query)
         extra: List[str] = []
-        for group in alias_groups:
-            if any(stemmed(p) and stemmed(p) <= qstems for p in group):
-                extra += group
+        for group in al.triggered_groups(query, alias_groups):
+            extra += group
         if extra:
             search_query = query + " " + " ".join(extra)
     try:
@@ -114,7 +189,9 @@ def _candidates(project: Project, query: str, folder: Optional[str],
     content = set(_content_terms(query))
     content_stems = {stem(t) for t in content}
     if alias_groups:
-        content_stems |= al.expand_stems(query, alias_groups)
+        # The SAME rule that widened `search_query` above. When these differed, a
+        # document the widening had reached could be dropped here as "missing".
+        content_stems |= al.query_stems(query, alias_groups)
 
     def keep(c: dict) -> bool:
         if c["rel"] in skip:
@@ -446,23 +523,82 @@ def _read_inv(project: Project):
         return ({}, str(e))
 
 
-def _value_near(line: str, terms: set) -> str:
-    """The concrete value closest to a query term in the line, normalized.
+def _value_and_position(line: str, terms: set):
+    """(normalized value, start, end) for the value closest to a query term.
 
     Proximity matters: in "Q2 update: the team closed 40 deals", the value about
     "deals" is 40, not the incidental "2" in "Q2". Picking the nearest value to a
     matched term avoids that whole class of false conflicts."""
     low = line.lower()
     positions = [low.find(t) for t in terms if t and t in low]
-    best, best_d = "", 10 ** 9
+    best, best_at, best_end, best_d = "", -1, -1, 10 ** 9
     for m in VALUE_RE.finditer(line):
         if not positions:
-            best = m.group(0)
+            best, best_at, best_end = m.group(0), m.start(), m.end()
             break
         d = min(abs(m.start() - p) for p in positions)
         if d < best_d:
-            best_d, best = d, m.group(0)
-    return re.sub(r"\s+", " ", best).strip().lower()
+            best_d, best, best_at, best_end = d, m.group(0), m.start(), m.end()
+    return re.sub(r"\s+", " ", best).strip().lower(), best_at, best_end
+
+
+def _value_near(line: str, terms: set) -> str:
+    """The concrete value closest to a query term in the line, normalized."""
+    return _value_and_position(line, terms)[0]
+
+
+# Function words are never the thing a value is about, so they are stepped over when
+# looking for the word that labels it.
+_PREDICATE_SKIP = {
+    "a", "an", "the", "of", "in", "on", "at", "to", "for", "by", "with", "from",
+    "is", "was", "were", "are", "be", "been", "being", "has", "have", "had",
+    "and", "or", "but", "as", "that", "this", "these", "those", "it", "its",
+    "will", "shall", "may", "must", "about", "per", "up", "than", "then", "there",
+    "not", "no", "any", "all", "each", "into", "over", "under", "within", "we",
+}
+
+
+def _predicate_of(line: str, at: int, end: int) -> tuple:
+    """(word before the value, word after it) — the two ways prose labels a number.
+
+    A conflict is a claim that two values are two readings of ONE fact, so the
+    grouping key has to say what each value *means*. It used to be "which query
+    terms appear in this line", which says nothing of the kind: a ship date, a
+    headcount and a revenue figure about the same subject all shared one key and
+    were reported as three values that disagree. On a real GST query that produced
+    eight "disagreeing" values that were simply eight different facts — and a
+    genuine disagreement would have been buried in the middle of them.
+
+    The word immediately before a value is how both prose and forms label it:
+    "Closing date 31/12/2026", "Contract value 42,000,000", "Payment terms:
+    net-45". Taking one word keeps the key robust to rephrasing ("revenue was 5
+    crore" and "revenue: 5.5 crore" still meet) while separating different facts.
+    BOTH sides are needed, and two rounds of adversarial review are why.
+
+    Reading only backwards was too weak: the word before a number is often a function
+    word, so "Widget has 12 engineers" and "Widget has 5 offices" both reduced to
+    "widget" and were asserted to disagree — two different metrics, one fabricated
+    conflict. What a number *counts* is part of what it means, and that word comes
+    after it.
+
+    Reading only backwards was also too narrow: "$500,000 is the approved budget" has
+    nothing before the value at all, so it got no key and its conflict item was
+    dropped — two contradictory budgets shown as plain evidence with no conflict
+    reported. Trading a fabricated conflict for a hidden one is a straight loss.
+
+    Deliberately a conservative trade in the other direction: a genuine conflict
+    phrased two ways ("revenue was 5 crore" / "revenue totaled 9 crore") is now
+    missed, because "was" is a function word and "totaled" is not. Both values are
+    still shown as evidence when that happens, so the reader can see them; what
+    docdex will not do is assert a disagreement it cannot stand behind. A real fix
+    needs a field label rather than neighbouring words — tracked for v0.5.7.
+    """
+    if at < 0:
+        return ("", "")
+    before = [t for t in tokenize(line[:at]) if t not in _PREDICATE_SKIP]
+    after = [t for t in tokenize(line[end:]) if t not in _PREDICATE_SKIP]
+    return (stem(before[-1]) if before else "",
+            stem(after[0]) if after else "")
 
 
 def _freshness(project: Project, check: bool) -> str:
@@ -494,6 +630,28 @@ def _authority(source: str) -> int:
     else 0. Used only as a same-recency tiebreak and shown as a label."""
     s = source.replace("_", " ")   # underscores are word chars, so \b would miss snake_case
     return (1 if _AUTHORITY_POS.search(s) else 0) - (1 if _AUTHORITY_NEG.search(s) else 0)
+
+
+def _conflict_label(key) -> str:
+    """What to call a conflict in the packet.
+
+    A form field's key is its own label and is shown verbatim. A free-text key is
+    (query terms, value kind, word before, word after), so the terms name the subject
+    and the labelling words name the fact — shown only where they add something the
+    terms don't already say, and in stemmed form because that is what the grouping
+    used.
+    """
+    if isinstance(key, str):
+        return key
+    if not isinstance(key, tuple) or len(key) != 4:      # pragma: no cover - guard
+        return "value"
+    terms, _kind, before, after = key
+    subject = ", ".join(terms)
+    seen = {stem(t) for t in terms}
+    extra = [w for w in (before, after) if w and w not in seen]
+    if extra:
+        return f"{subject} · {' '.join(extra)}" if subject else " ".join(extra)
+    return subject or "value"
 
 
 def _conflicts(items, mtimes: dict):
@@ -540,7 +698,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
     # Provenance (the ~approx synonym tag) is scoped to FREE-TEXT search only. In
     # form mode the field-label synonym path is deferred, so alias_extra stays
     # empty and the two _approx_match call sites below become no-ops (intended).
-    alias_extra = ((al.expand_stems(task, alias_groups) - stemmed(task))
+    alias_extra = ((al.query_stems(task, alias_groups) - stemmed(task))
                    if (alias_groups and not form_fields) else set())
     inv_rows, state_err = _read_inv(project)
     mtimes = {rel: row.get("mtime_iso", "") for rel, row in inv_rows.items()}
@@ -665,8 +823,17 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         for rel, chunk, excerpt, _score, _approx in evidence:
             for line in _value_lines(excerpt, terms):
                 answers.append((line, f"{rel} ·{chunk}", _approx_match(line, terms, alias_extra)))
-                key = tuple(sorted(t for t in terms if t in line.lower()))
-                conflict_items.append((key, _value_near(line, terms), rel, line))
+                value, at, end = _value_and_position(line, terms)
+                labels = _predicate_of(line, at, end)
+                if not any(labels):
+                    continue      # nothing labels this value → no conflict to claim
+                # The key names the FACT, not merely the words the line shares with
+                # the query: the query terms it mentions, what kind of value it is,
+                # and the words that label the value on either side. Two values may
+                # only be called disagreeing when all of that matches.
+                key = (tuple(sorted(t for t in terms if t in line.lower())),
+                       _value_key(value)[0]) + labels
+                conflict_items.append((key, value, rel, line))
         answers = answers[:8]
     conflicts = _conflicts(conflict_items, mtimes)
 
@@ -745,7 +912,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         out.append("## Conflicts")
         out.append("> newer / more-authoritative is not necessarily correct — verify.")
         for key, reps in conflicts:
-            label = key if isinstance(key, str) else (", ".join(key) or "value")
+            label = _conflict_label(key)
             out.append(f"- {label}: {len(reps)} values disagree")
             for i, (val, src, _line) in enumerate(reps):
                 mt = mtimes.get(src, "")
@@ -823,13 +990,11 @@ def build_packet(project: Project, task: str, budget: int = 3000,
         out.append("- stems: " + ("; ".join(
             f"{s} ← {', '.join(ts)}" for s, ts in stem_groups.items()) or "(none)"))
         if alias_groups:
-            # Reflect the groups the query actually TRIGGERED (full phrase present
-            # by stem), consistent with retrieval — not any-token membership.
-            shown = []
-            for g in alias_groups:
-                present = [p for p in g if al._phrase_present(p, [stem(t) for t in tokenize(task)])]
-                if present:
-                    shown.append(" / ".join(g))
+            # The groups the query actually triggered, through the one shared rule —
+            # so `--explain` reports the widening that really happened. This used to
+            # apply the contiguous-run rule while claiming to match retrieval, which
+            # made it a third answer to the same question.
+            shown = [" / ".join(g) for g in al.triggered_groups(task, alias_groups)]
             out.append("- aliases: " + ("; ".join(shown) if shown else "(none matched)"))
         out.append(f"- candidate chunks retrieved: {len(pool)}")
         out.append(f"- evidence packed: {len(evidence)} (≤{MAX_PER_SOURCE}/source); "

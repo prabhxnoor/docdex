@@ -122,7 +122,22 @@ def external_embed(text: str, command: str) -> List[float]:
 
 
 def current_backend() -> str:
-    return "external" if os.environ.get(EMBED_CMD_ENV, "").strip() else LOCAL_BACKEND
+    """Which embedder produced a vector — identifying the MODEL, not just the kind.
+
+    This returned the bare string "external" for any `DOCDEX_EMBED_CMD`, and reuse
+    compares it: swapping to a different model of the same dimension therefore reused
+    every unchanged file's old vectors and embedded only the new files, leaving one
+    index holding two models' vectors with no warning. Cosine similarity across two
+    embedding spaces is meaningless, so every ranking that mixed them was noise
+    presented as relevance.
+
+    The command string is hashed rather than stored so the label stays short and a
+    command containing a key or a path does not end up written into the manifest.
+    """
+    cmd = os.environ.get(EMBED_CMD_ENV, "").strip()
+    if not cmd:
+        return LOCAL_BACKEND
+    return "external:" + hashlib.sha1(cmd.encode("utf-8")).hexdigest()[:12]
 
 
 def embed(text: str) -> List[float]:

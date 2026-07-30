@@ -145,21 +145,25 @@ def pytest_run(tree: Path, targets: list = None, env: dict = None) -> dict:
     return out
 
 
-def tree_digest(dirty_lines: list) -> str:
-    """A hash of the CONTENTS of everything not committed.
+def tree_hashes(dirty_lines: list) -> dict:
+    """{path: hash of its contents} for everything not committed.
 
     Gate 5 compares this before and after the run. Porcelain status alone cannot see a
     dirty file edited twice — the status line is identical either way, while the suite
     and the benchmarks read different source. Only uncommitted paths need hashing: what
     is committed is pinned by the SHA the verdict already names.
+
+    Per path rather than one digest over the whole set, so a difference can be NAMED.
+    A gate that reports "something changed" and cannot say what leaves the reader to
+    guess whether it mattered, which is how a real signal gets waved through.
     """
-    h = hashlib.sha256()
+    out = {}
     for line in sorted(dirty_lines):
         path = line[3:].strip().strip('"')
         # A rename reads as `old -> new`; the destination is what exists now.
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
-        h.update(path.encode("utf-8", "replace") + b"\0")
+        h = hashlib.sha256()
         target = REPO / path
         try:
             if target.is_file():
@@ -173,7 +177,117 @@ def tree_digest(dirty_lines: list) -> str:
                 h.update(b"<absent>")
         except OSError as exc:
             h.update(f"<unreadable: {exc}>".encode("utf-8", "replace"))
-    return h.hexdigest()
+        out[path] = h.hexdigest()
+    return out
+
+
+# Paths the gate itself rewrites while it runs: gate 2 re-runs both benchmark suites,
+# and those harnesses write their results. Listing them explicitly keeps the content
+# check meaningful for everything else instead of switching it off wholesale.
+GATE_WRITES = (
+    "benchmarks/results.json", "benchmarks/RESULTS.md",
+    "benchmarks/results_task.json", "benchmarks/RESULTS_TASK.md",
+)
+
+
+def highest_release_tag() -> str:
+    """The highest `vX.Y.Z` tag by VERSION order, across every tag in the repo."""
+    out = run(["git", "tag", "--list", "v*"], REPO).stdout.split()
+    best, best_key = "", None
+    for tag in out:
+        try:
+            key = tuple(int(p) for p in tag.lstrip("v").split(".")[:3])
+        except ValueError:
+            continue
+        if best_key is None or key > best_key:
+            best, best_key = tag, key
+    return best
+
+
+def _changelog_has_section(version: str) -> bool:
+    """A real `## [x.y.z]` heading, not the string appearing anywhere in the file."""
+    try:
+        text = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    fenced = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue                      # a heading quoted in an example is not one
+        if re.match(rf"^##\s+\[{re.escape(version)}\]", line.strip()):
+            return True
+    return False
+
+
+def _roadmap_names(version: str) -> bool:
+    """`vX.Y.Z` on a heading or a list item, not buried in unrelated prose."""
+    try:
+        text = (REPO / "ROADMAP.md").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    needle = f"v{version}"
+    for line in text.splitlines():
+        s = line.strip()
+        if (s.startswith("#") or s.startswith("-") or s.startswith("*")
+                or s.startswith("|")) and needle in s:
+            return True
+    return False
+
+
+def _history_has_record(version: str) -> bool:
+    """A parseable HISTORY record for this version carrying real measurements.
+
+    A substring check passed on `"v0.5.6"` sitting in malformed or unrelated text, so
+    the gate could certify a release whose benchmark row did not exist.
+    """
+    try:
+        data = json.loads((REPO / "benchmarks" / "HISTORY.json").read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    for rec in data.get("records", []):
+        if rec.get("version") != version:
+            continue
+        suites = rec.get("suites") or rec
+        return bool(suites) and len(json.dumps(suites)) > 80
+    return False
+
+
+# Files that grade the release. Gate 2 imports these from HEAD and overlays them onto
+# the base tree, so they must not change in the same release they are grading.
+HARNESS_FILES = ("benchmarks/task_benchmark.py", "benchmarks/run_benchmark.py",
+                 "benchmarks/corpus_gen.py")
+
+
+def _claimed_fixes(version: str):
+    """[(finding, test node)] from the release's FIXED_BY.tsv, or None if absent.
+
+    Two tab-separated columns; `#` comments and blank lines ignored. A row whose test
+    column is `-` declares a fix that deliberately has no discriminating test, and
+    must carry a reason in a third column — which the gate prints but cannot judge.
+    """
+    path = QA_ARCHIVE / f"v{version}" / "FIXED_BY.tsv"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    rows = []
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = [c.strip() for c in line.split("\t") if c.strip()]
+        if len(parts) >= 2 and parts[1] != "-":
+            rows.append((parts[0], parts[1]))
+    return rows
+
+
+def _harness_unchanged(base: str) -> bool:
+    changed = run(["git", "diff", "--name-only", base, "--"] + list(HARNESS_FILES),
+                  REPO).stdout.split()
+    return not changed
 
 
 def _adjudication_ok(path: Path, version: str) -> bool:
@@ -234,12 +348,14 @@ def main() -> int:
                     help="waiver: this release adds no tests, for this stated reason")
     args = ap.parse_args()
     if not args.base:
-        args.base = run(["git", "describe", "--tags", "--abbrev=0"],
-                        REPO).stdout.strip()
+        # Highest release tag by version order, NOT `git describe`'s nearest reachable
+        # tag: on a branch cut before the latest release those differ, and comparing
+        # against the older one lets a fixed wrong answer come back unnoticed.
+        args.base = highest_release_tag()
         if not args.base:
             print("qa_release: no tags found; pass --base explicitly", file=sys.stderr)
             return 2
-        print(f"(base not given; using the most recent tag: {args.base})")
+        print(f"(base not given; using the highest release tag: {args.base})")
 
     work = Path(tempfile.mkdtemp(prefix="docdex-qa-"))
     base_tree = work / "base"
@@ -249,7 +365,7 @@ def main() -> int:
     head_sha = run(["git", "rev-parse", "--short", "HEAD"], REPO).stdout.strip()
     dirty = [ln for ln in run(["git", "status", "--porcelain"], REPO).stdout.splitlines()
              if ln.strip()]
-    started_digest = tree_digest(dirty)
+    started_hashes = tree_hashes(dirty)
     print(f"QA gate: working tree at {head_sha} vs {args.base}")
     print("=" * 68)
 
@@ -272,23 +388,33 @@ def main() -> int:
     # Found by adversarial review: `version != base_v` also accepts a DOWNGRADE, so a
     # tree carrying older behaviour and known bugs could be released as long as the
     # documents agreed with it.
-    newest_tag = run(["git", "describe", "--tags", "--abbrev=0"], REPO).stdout.strip()
+    newest_tag = highest_release_tag()
     checks = [
         (f"version goes up ({base_v} -> {version})",
          bool(hv) and bool(bv) and hv > bv),
-        (f"base {args.base} is the most recent tag ({newest_tag or 'none'})",
+        # `git describe` finds the nearest tag REACHABLE from HEAD, so on a branch cut
+        # before the latest release it happily nominates an older one and then agrees
+        # with itself that it is the newest. Compared by version order across all
+        # tags instead. Found by adversarial review.
+        (f"base {args.base} is the highest release tag ({newest_tag or 'none'})",
          (not newest_tag) or args.base == newest_tag),
-        (f"CHANGELOG has a [{version}] section",
-         f"## [{version}]" in (REPO / "CHANGELOG.md").read_text(encoding="utf-8")),
-        (f"ROADMAP mentions v{version}",
-         f"v{version}" in (REPO / "ROADMAP.md").read_text(encoding="utf-8")),
+        # Parsed as a HEADING, not as a substring: `## [0.5.6]` quoted inside an older
+        # entry's code block would satisfy `in`. Same for the others below.
+        (f"CHANGELOG has a [{version}] section", _changelog_has_section(version)),
+        (f"ROADMAP names v{version} in a heading or bullet",
+         _roadmap_names(version)),
         # Existence alone was satisfied by an empty file, so the gate could claim
         # evidence that did not exist. Found by adversarial review.
         ("QA archive holds a real adjudication for this version",
          _adjudication_ok(QA_ARCHIVE / f"v{version}" / "ADJUDICATION.md", version)),
-        (f"this release is recorded in benchmarks/HISTORY.json",
-         f'"v{version}"' in (REPO / "benchmarks" / "HISTORY.json").read_text(
-             encoding="utf-8")),
+        (f"benchmarks/HISTORY.json holds a valid record for v{version}",
+         _history_has_record(version)),
+        # The benchmark harness is the oracle for BOTH sides of gate 2: `sweep`
+        # overlays today's harness onto the base tree, so a release that edits the
+        # harness moves the exam and the answer together and both sides look perfect.
+        # Changing it is sometimes right — it just cannot pass unnoticed.
+        ("benchmark harness unchanged since the base (it grades both sides)",
+         _harness_unchanged(args.base)),
     ]
     for label, ok in checks:
         print(f"      {'OK  ' if ok else 'MISS'} {label}")
@@ -318,6 +444,14 @@ def main() -> int:
                         "empty suite is not evidence of anything")
     else:
         print("      OK")
+
+    # How many cases HEAD and the BASE release collect. A conftest hook can drop almost
+    # the whole suite without printing "deselected" — pytest then exits 0 over one
+    # passing smoke test and gate 1 says OK. A release may legitimately remove tests,
+    # but it cannot quietly lose most of them. Compared after gate 3 builds the base
+    # tree. Found by adversarial review.
+    rep_head_total = rep["total"]
+    base_total = None
 
     # ------------------------------------------------ prepare the base worktree
     run(["git", "worktree", "add", "-q", "--detach", str(base_tree), args.base], REPO)
@@ -482,6 +616,11 @@ def main() -> int:
         # Overlay the WHOLE tests/ tree so fixtures, conftest and data come too.
         shutil.rmtree(base_tree / "tests", ignore_errors=True)
         shutil.copytree(REPO / "tests", base_tree / "tests")
+        # The base suite's own size, measured with this release's tests in place, so
+        # gate 1 can tell "we removed a test" from "a hook swallowed the suite".
+        base_all = pytest_run(base_tree,
+                              env={"DOCDEX_CACHE_DIR": str(work / "cache_basefull")})
+        base_total = base_all["total"]
         rep = pytest_run(base_tree, changed,
                          env={"DOCDEX_CACHE_DIR": str(work / "cache_gate3")})
         for f in rep["assertion"]:
@@ -501,6 +640,30 @@ def main() -> int:
                 "on missing internals — neither proves they would catch the bug.")
         else:
             print(f"      OK — {len(rep['assertion'])} assertion(s) catch base behaviour")
+
+        # ONE assertion failure is not evidence for TEN claimed fixes. A release that
+        # fixes many things declares which test proves each, and every one of those
+        # tests must fail on the base tree. Without this, nine untested fixes ride
+        # along behind a single valid test. Found by adversarial review.
+        mapping = _claimed_fixes(version)
+        if mapping is None:
+            failures.append(
+                f"{QA_ARCHIVE.name}/v{version}/FIXED_BY.tsv is missing. List each "
+                f"finding this release fixes and the test that proves it, so the gate "
+                f"can check EVERY claimed fix is covered — not just that one is.")
+            print("      MISS — no finding-to-test map declared")
+        else:
+            caught = set(rep["assertion"])
+            unproven = [(f, t) for f, t in mapping
+                        if not any(a.endswith(t) or t in a for a in caught)]
+            for finding, test in mapping:
+                mark = "OK  " if (finding, test) not in unproven else "MISS"
+                print(f"      {mark} {finding} <- {test}")
+            if unproven:
+                failures.append(
+                    "these claimed fixes have no test that fails on the base tree, so "
+                    "nothing shows they were ever broken: "
+                    + "; ".join(f"{f} ({t})" for f, t in unproven))
 
     # -------------------------------------------------- gate 4: determinism
     print("\n[4/6] determinism on HEAD")
@@ -537,6 +700,21 @@ def main() -> int:
         print(f"      OK — packet sha256 stable across runs and hash seeds "
               f"({h1[:12]}…)")
 
+    # Deferred from gate 1: the base tree only exists once gate 3 has built it, and
+    # this comparison needs both sizes. A conftest hook that swallows the suite exits
+    # 0 with no "deselected" line, so the only reliable signal is the case COUNT
+    # against the previous release's. Found by adversarial review.
+    if base_total:
+        if rep_head_total < base_total * 0.9:
+            failures.append(
+                f"HEAD collected {rep_head_total} test cases against the base's "
+                f"{base_total} — over a tenth of the suite disappeared without "
+                f"failing anything. A hook or a collection error can do this while "
+                f"pytest still exits 0.")
+        else:
+            print(f"\n      suite size: {rep_head_total} cases on HEAD vs "
+                  f"{base_total} on {args.base}")
+
     # ------------------------------------------------- gate 5: honest verdict
     print("\n[5/6] what was verified")
     print(f"      commit:      {head_sha}")
@@ -572,15 +750,25 @@ def main() -> int:
                         f"({len(dirty)} -> {len(dirty_now)} path(s)); nothing it "
                         f"reported describes a single fixed tree. Differing status "
                         f"line(s): {'; '.join(m.strip() for m in moved[:6])}")
-    elif tree_digest(dirty) != started_digest:
+    else:
         # Status lines alone cannot see a dirty file edited AGAIN while the gate ran:
         # `M  src/docdex/index_db.py` before and after, different contents in between,
         # so the tests and the benchmarks measured different source. Found by
         # adversarial review. Content is hashed, not just the status.
-        failures.append(
-            "a file's CONTENTS changed while the gate ran without changing its git "
-            "status, so the suite and the benchmarks did not necessarily measure the "
-            "same source. Re-run on a settled tree.")
+        ended_hashes = tree_hashes(dirty)
+        churned = sorted(p for p in set(started_hashes) | set(ended_hashes)
+                         if started_hashes.get(p) != ended_hashes.get(p))
+        mine = [p for p in churned if p in GATE_WRITES]
+        theirs = [p for p in churned if p not in GATE_WRITES]
+        if mine:
+            notes.append(f"gate 2 rewrote its own benchmark output while running: "
+                         f"{', '.join(mine)} (expected)")
+        if theirs:
+            failures.append(
+                f"these files' CONTENTS changed while the gate ran, without changing "
+                f"their git status, so the suite and the benchmarks did not "
+                f"necessarily measure the same source: {', '.join(theirs)}. Re-run on "
+                f"a settled tree.")
     if dirty_now:
         # Found by adversarial review: a pass on a dirty tree named HEAD's SHA, so
         # tagging that SHA could ship the committed bug while the fix sat uncommitted.

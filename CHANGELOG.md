@@ -10,9 +10,134 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Next: **v0.5.6** — reading a value that sits *before* its label ("Helios Components
+Next: **v0.5.7** — reading a value that sits *before* its label ("Helios Components
 Pvt Ltd **as the Vendor**"), the last form-filling gap; then optional embeddings /
 RRF via `DOCDEX_EMBED_CMD`. See [ROADMAP.md](ROADMAP.md).
+
+## [0.5.6] — 2026-07-30 — "Ten things nobody had looked at"
+
+**The first release driven by reviewing the whole product rather than the last
+change.** Every previous release reviewed its own diff, which is why nine of these
+ten defects had been sitting in place for several releases without anything in the
+process being able to notice them.
+
+**In plain terms.** Two of these gave wrong answers on the real corpus. Asking for
+one folder could return a different folder's documents, because the folder name went
+into a database query where `_` means "any character" — on the real corpus,
+`--folder "1. Audited_Financials"` also returned files from an unrelated diligence
+tree called `1. Audited Financials`. And documents found *because of* your synonym
+list were then judged and labelled as if the synonym had never applied, so a
+paraphrase like "what date does the agreement become effective" pulled in eight
+contracts that only say "Commencement Date" and presented them as exact matches.
+
+Four more were docdex saying untrue things about itself: it manufactured
+disagreements between facts that had nothing to do with each other, it could never
+report OCR work as done no matter how much of it you finished, it read ordinary words
+like `covid19` as identifiers, and its health check hashed about one file in fifty
+while printing a line any reader would take as "all of them verified".
+
+### Fixed
+
+- **`--folder` returned other folders' documents.** The name was interpolated into a
+  SQL `LIKE` pattern with no escaping, so `_` matched any single character and `%`
+  matched any run. Now escaped with an explicit `ESCAPE` clause. The semantic path
+  did this filter with a plain substring test and never had the bug.
+- **A synonym that widened the search did not govern the evidence.** There were three
+  different rules for "did this query ask for an alias group": retrieval used
+  subset-of-stems, the evidence test and the `~approx` tag required the phrase as a
+  contiguous run, and `--explain` used the contiguous rule while its own comment
+  claimed it matched retrieval. One rule now answers the question everywhere.
+- **`sync --no-hash` left the search index permanently stale.** `--no-hash` records an
+  empty checksum for every file, and the index compared checksum to checksum — so
+  `"" == ""` read as "unchanged" and nothing was re-indexed, while the text cache was
+  correctly rewritten. Search then answered from text the document no longer contained
+  and could not find the text it did, while sync reported the file as changed. Now
+  falls back to modification time and size when either checksum is missing, which is
+  the rule `sync` itself already applied. Same trap for any file over the 200 MB
+  hashing limit.
+- **The Conflicts section manufactured disagreements.** It grouped by "which query
+  terms appear in this line", which says nothing about what a number means, so a ship
+  date, a headcount and a revenue figure about one subject were reported as three
+  values that disagree. On a real GST query that produced eight "disagreeing" values
+  that were simply eight different facts — and a genuine disagreement would have been
+  buried among them. Values are now grouped by what labels them.
+- **Finished OCR work could never count as done.** The queue omitted every completed
+  row when it was rebuilt, so the count of completed rows was necessarily zero *and*
+  the total shrank as work got finished: 1,041 notes already written on the real
+  corpus read as `0/1896 done`. Completed rows now stay, marked `done`.
+- **One failing sync stage silently skipped every later one.** An exception in the
+  index build cancelled the context dumps, the embeddings and the OCR queue with no
+  report. That is the mechanism that left the OCR queue and the dumps frozen for a day
+  after v0.5.4's bug: the failure was real, its consequences invisible. Each stage is
+  now isolated, named when it fails, and the command exits non-zero.
+- **Four of six sync stages ran with no lock held.** `run_sync` released the lock in
+  its own `finally`, after which the CLI ran four more stages unprotected. Two syncs
+  overlapping past that point both rebuild the search index and both replace the
+  semantic index. The lock is now held for the whole run.
+- **Swapping embedding models mixed two models' vectors in one index.** Reuse compared
+  the literal string `"external"`, which every `DOCDEX_EMBED_CMD` reports, so a
+  different model of the same size re-embedded nothing. The command is now
+  fingerprinted. Dormant until v0.5.7 uses it — fixed before it could bite.
+- **`doctor` reported a 2% sample as if it were the whole corpus.** It hashes every
+  50th row; the line read `rows=11880 missing=0 sha_mismatch=0`. It now says
+  `sha_checked=`, and says in words that the sample is a sample.
+- **Ordinary words read as identifiers.** A global `re.I` was applied to a pattern
+  whose identifier branch is written `[A-Z0-9]`, defeating its own character class:
+  `covid19`, `windows10` and `section2b` all matched as identifiers. Case sensitivity
+  is now per branch.
+
+### From adversarial review of this release
+
+- **The conflict fix hid a real conflict.** Reading the label from the words *before*
+  a value meant `$500,000 is the approved budget` had no label at all, so its conflict
+  was dropped entirely — two contradictory budgets shown as plain evidence. Trading a
+  fabricated conflict for a hidden one is a straight loss. Both sides are now read.
+- **And it still fabricated one.** `Widget has 12 engineers` and `Widget has 5
+  offices` both reduced to `widget`, because the verb between them is a function word.
+  What a number counts is part of what it means, so the word after it counts too.
+- **A real invoice number stopped being a value.** The new "ignore document
+  numbering" rule listed `no`/`serial`, so `Invoice No. 42` — where the number *is*
+  the answer — was suppressed. Suppressing a real value hides evidence; treating a
+  stray cross-reference as a value only spends a ranking tie-break.
+- **The same rule silently did not apply at the end of a sentence.** `page 3.`
+  absorbed the full stop, stopped looking like a plain number, and skipped the check.
+  Found while fixing the item above; in no review.
+- **`GSTIN 29ABCDE1234F1Z5` extracted as `29`.** The bare-number branch was tried
+  before the identifier branch — the same ordering bug v0.5.0 fixed for dates, left
+  standing one branch lower. Emails were worse off still: `user123@x.com` yielded
+  `123`.
+- **A deleted OCR note still counted as finished work.** The new `done` column was
+  trusted alongside the note itself. The note is the deliverable.
+
+### Deliberately not fixed, and why
+
+- **A genuine conflict phrased two ways is now missed** — `revenue was 5 crore`
+  against `revenue totaled 9 crore`. Both values are still shown as evidence, so
+  nothing is hidden from the reader; what docdex will not do is assert a disagreement
+  it cannot stand behind. Doing better needs a real field label rather than
+  neighbouring words. Tracked for v0.5.7.
+- **`has_value` is still close to "contains a digit".** Excluding document numbering
+  moved 519 of 92,526 chunks — 96.6% to 96.0%. The cause is granularity, not the
+  pattern: the flag is computed per 1,800-character chunk, and almost any chunk that
+  size contains some real number. The `re.I` defect above is genuinely fixed; this
+  half of the finding is not, and is tracked rather than claimed.
+
+### The release gate, hardened again
+
+The QA gate itself was reviewed and six ways it could certify a bad release were
+closed. Two caught real mistakes in this very release within minutes: a
+module-level import of a new helper made the whole new test file fail to *collect*
+against the previous release, cutting the comparison suite to one case; and two of
+these tests only *raised* on the base tree instead of failing an assertion, so they
+were not evidence of anything. Notably, gate 3 used to accept **one** failing
+assertion as proof of any number of fixes — a release now declares which test proves
+each fix, and every one of them must fail on the previous release.
+
+### Real corpus
+
+Verified end to end on the real corpus (10,636 supported files, 92,526 chunks). 387 tests,
+up from 324. Both benchmark suites unchanged: single-fact retrieval 12/12, form
+filling 10/11 at 1,433 tokens.
 
 ## [0.5.5] — 2026-07-30 — "Advice that works"
 

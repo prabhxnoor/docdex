@@ -30,7 +30,9 @@ from docdex.config import DocdexError, Project
 from docdex.inventory import read_inventory
 from docdex.search import tokenize
 
-SCHEMA_VERSION = "4"   # v4: chunks.has_value, a tie-break signal (see _mirror_rows).
+SCHEMA_VERSION = "5"   # v5: files.size, so a file with no hash is tracked by
+#                        mtime+size (see _index_is_current) — v4 added
+#                        chunks.has_value, a tie-break signal (see _mirror_rows).
                        # v3: dual FTS (porter + unicode61), max-score fusion.
                        # Older versions auto-rebuild on the next sync.
 
@@ -112,7 +114,7 @@ _TABLE_SQL = (
     "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)",
     "CREATE TABLE IF NOT EXISTS files("
     "rel TEXT PRIMARY KEY, sha1 TEXT, mtime_iso TEXT, ext TEXT, "
-    "top_folder TEXT, tokens INTEGER)",
+    "top_folder TEXT, tokens INTEGER, size INTEGER DEFAULT 0)",
     "CREATE TABLE IF NOT EXISTS chunks("
     "chunk_id INTEGER PRIMARY KEY AUTOINCREMENT, "
     "rel TEXT, chunk_index INTEGER, start_offset INTEGER, "
@@ -122,18 +124,18 @@ _TABLE_SQL = (
 )
 
 
-def _expected_chunk_columns() -> set:
-    """The columns `chunks` should have, read from the DDL that creates it.
+def _expected_columns(table: str) -> set:
+    """The columns `table` should have, read from the DDL that creates it.
 
     Derived rather than declared so this check can never drift from the definition
     it is checking — a hand-written copy of the column list is one more thing to
-    forget when a column is added, which is how this release's bug began.
+    forget when a column is added, which is how v0.5.2's bug began.
     """
     probe = sqlite3.connect(":memory:")
     try:
         for stmt in _TABLE_SQL:
             probe.execute(stmt)
-        return {r[1] for r in probe.execute("PRAGMA table_info(chunks)")}
+        return {r[1] for r in probe.execute(f"PRAGMA table_info({table})")}
     finally:
         probe.close()
 
@@ -143,17 +145,79 @@ def _needs_rebuild(conn: sqlite3.Connection, stored_ver: Optional[str]) -> bool:
 
     Two independent signals, because the recorded version alone is not enough. A
     database whose `meta` row for 'schema' is missing reports no version at all, so a
-    version comparison sees nothing to do while `chunks` still carries its old column
-    list — and the crash simply waits for the next changed file to insert a row.
-    Found by adversarial review of this very fix. So the real table shape is checked
-    too, and either mismatch is enough.
+    version comparison sees nothing to do while a stored table still carries its old
+    column list — and the crash simply waits for the next changed file to insert a
+    row. Found by adversarial review of the v0.5.4 fix. So the real table shape is
+    checked too, and either mismatch is enough.
+
+    EVERY stored table is checked, not just `chunks`: v0.5.6 adds `files.size`, and a
+    check that only knew about `chunks` would have walked straight back into the same
+    hole from the other side.
     """
     if stored_ver is not None and stored_ver != SCHEMA_VERSION:
         return True
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(chunks)")}
-    if not cols:
-        return False          # no `chunks` yet: a fresh database, nothing to redo
-    return cols != _expected_chunk_columns()
+    for table in ("chunks", "files"):
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if not cols:
+            continue          # not created yet: a fresh database, nothing to redo
+        if cols != _expected_columns(table):
+            return True
+    return False
+
+
+def _index_is_current(indexed, inventory_row) -> bool:
+    """Does the index already hold this file's current text?
+
+    The same rule `sync` applies to the text caches: compare hashes when both sides
+    have one, otherwise fall back to mtime+size (sync.py — `same_hash if row["sha1"]
+    and prev.get("sha1") else same_meta`).
+
+    Comparing hashes alone was wrong for every file whose hash is empty, and two
+    ordinary situations produce one: `--no-hash`, and any file at or over
+    `HASH_SIZE_LIMIT`. `"" != ""` is false, so an edited file read as unchanged and
+    the index kept answering from text the document no longer contained — while
+    `sync` had already rewritten the cache and reported the file as changed. Nothing
+    in the output disagreed with itself; only the answers were wrong.
+    """
+    if indexed is None:
+        return False
+    stored_sha, current_sha = indexed["sha1"], inventory_row.get("sha1", "")
+    if stored_sha and current_sha:
+        return stored_sha == current_sha
+    return (indexed["mtime_iso"] == inventory_row.get("mtime_iso", "")
+            and _same_size(indexed["size"], inventory_row.get("size", "")))
+
+
+def _same_size(stored, current) -> bool:
+    """Compare two sizes as numbers when both are numeric, otherwise as text.
+
+    The stored size is an INTEGER and the inventory's is a string from a TSV, so this
+    was written as `str(stored or "")` — which turns the integer 0 into `""` while the
+    inventory's `"0"` stays `"0"`, making any zero-size row compare unequal to itself
+    and be re-indexed on every sync forever. Not reachable through the CLI today: a
+    row only reaches this comparison when its text cache is non-empty, and a 0-byte
+    file cannot produce one. Fixed regardless — a comparison that is wrong for a value
+    it can be handed is a trap set for the next change. Found by adversarial review.
+    """
+    try:
+        return int(stored) == int(current)
+    except (TypeError, ValueError):
+        return (str(stored if stored is not None else "")
+                == str(current if current is not None else ""))
+
+
+def _like_escape(value: str) -> str:
+    """Escape the wildcards SQL LIKE would otherwise find inside a folder name.
+
+    `--folder` went into the pattern raw, so `_` matched any single character and `%`
+    matched anything. On the real corpus `--folder "1. Audited_Financials"` also
+    returned a different tree's "1. Audited Financials" — one folder's request
+    answered with another folder's documents, with nothing to show it had happened.
+    The semantic path does this filter with a plain substring test and never had it.
+    """
+    for ch in ("\\", "%", "_"):
+        value = value.replace(ch, "\\" + ch)
+    return value
 
 
 def _init_schema(conn: sqlite3.Connection, has_fts: bool) -> None:
@@ -187,7 +251,7 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
     # top-level import would be circular. Sharing the ONE pattern matters more than
     # import tidiness — a second copy of it here would drift from the extractor's,
     # and then a chunk could be ranked as value-bearing but yield no value.
-    from docdex.context import VALUE_RE as value_re
+    from docdex.context import carries_value
 
     inventory = read_inventory(project.inventory_path)
     conn = _open_for_build(project, quiet=quiet)
@@ -235,7 +299,8 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
 
         _init_schema(conn, has_fts)
 
-        prior = {r["rel"]: r["sha1"] for r in conn.execute("SELECT rel, sha1 FROM files")}
+        prior = {r["rel"]: r for r in conn.execute(
+            "SELECT rel, sha1, mtime_iso, size FROM files")}
         current = {}
         for rel, row in inventory.items():
             cache = project.cache_path_for(rel)
@@ -246,7 +311,7 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
                 continue
 
         changed = [rel for rel, row in current.items()
-                   if force or prior.get(rel) != row.get("sha1")]
+                   if force or not _index_is_current(prior.get(rel), row)]
         removed = [rel for rel in prior if rel not in current]
 
         for rel in removed + changed:
@@ -261,11 +326,11 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
             except OSError:
                 continue
             conn.execute(
-                "INSERT INTO files(rel, sha1, mtime_iso, ext, top_folder, tokens) "
-                "VALUES(?,?,?,?,?,?)",
+                "INSERT INTO files(rel, sha1, mtime_iso, ext, top_folder, tokens, "
+                "size) VALUES(?,?,?,?,?,?,?)",
                 (rel, row.get("sha1", ""), row.get("mtime_iso", ""),
                  row.get("ext", ""), project.top_folder_for(rel),
-                 tok.count_tokens(text)))
+                 tok.count_tokens(text), row.get("size", 0)))
             for idx, (start, end, chunk) in enumerate(tok.iter_chunks(text)):
                 if len(chunk.strip()) < 3:
                     continue
@@ -273,7 +338,7 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
                     "INSERT INTO chunks(rel, chunk_index, start_offset, "
                     "end_offset, tokens, text, has_value) VALUES(?,?,?,?,?,?,?)",
                     (rel, idx, start, end, tok.count_tokens(chunk), chunk,
-                     1 if value_re.search(chunk) else 0))
+                     1 if carries_value(chunk) else 0))
 
         reindex = bool(changed or removed)
         repaired = False
@@ -499,8 +564,8 @@ def _mirror_rows(conn, table: str, match: str, folder: Optional[str],
         f"WHERE {table} MATCH ?")
     params: list = [match]
     if folder:
-        sql += " AND c.rel LIKE ?"
-        params.append(f"%{folder}%")
+        sql += " AND c.rel LIKE ? ESCAPE '\\'"
+        params.append(f"%{_like_escape(folder)}%")
     # Bucket by SCORE_GRAIN first so noise-level differences don't decide; within a
     # bucket prefer a value-bearing chunk, then fall back to the exact score, then to
     # a stable path order. Chunks whose relevance genuinely differs never reorder.
