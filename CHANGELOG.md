@@ -10,9 +10,120 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Next: **v0.5.7** — reading a value that sits *before* its label ("Helios Components
-Pvt Ltd **as the Vendor**"), the last form-filling gap; then optional embeddings /
-RRF via `DOCDEX_EMBED_CMD`. See [ROADMAP.md](ROADMAP.md).
+Next: **v0.5.8** — optional embeddings / RRF via `DOCDEX_EMBED_CMD`, aimed at the
+weakest number docdex has (vaguely-worded search finds the right file first 4 times in
+12). See [ROADMAP.md](ROADMAP.md).
+
+## [0.5.7] — 2026-07-30 — "The name before the label"
+
+**The form benchmark reads 11/11 for the first time**, at fewer tokens than 10/11 cost.
+
+**In plain terms.** Contracts name a company and *then* say what role it plays —
+"Master agreement with Helios Components Pvt Ltd **as the Vendor**", 'Acme Corporation
+(**the "Supplier"**)'. Every release until now read a field's value from the text
+*after* its label, so in those lines it found the label, looked forward, saw nothing,
+and reported "matched, no clear value". docdex can now read the name that comes first.
+
+This was the last gap in form filling and it waited four releases on purpose. Reading
+backwards is the direction that goes wrong: from "Payment terms are net-45. Vendor:
+Acme" a careless backward reader hands `net-45` to `Legal name`, and a confidently
+wrong answer costs far more than the missing one it replaces, because the agent cannot
+tell. What makes it safe is not a list of exceptions but the shape of what may be
+read — a run of proper nouns ending in a legal form, immediately before a required
+connective. Amounts and dates are not capitalised company names, so the whole leakage
+class is closed by construction.
+
+### Fixed
+
+- **A value written before its label is now read** — "… as the Vendor", "… (the
+  'Supplier')", "… hereinafter referred to as the Vendor", "… acting as Supplier".
+  Always tagged `~approx`: it is an inference about sentence structure, not a
+  label-then-value adjacency, and it can never displace an ordinary forward reading.
+
+### It needed two changes, and only measuring showed why
+
+Extraction alone would have changed nothing. The chunk carrying the benchmark's own
+apposition line **was not in a candidate pool of 60** for that field: every candidate
+ties at a BM25 score of 0, because a label like "Legal name" and its synonyms are
+ubiquitous in contract prose, and the tie-break introduced in v0.5.2 then sorted every
+chunk containing *any digit* above the one chunk that could answer — a company name
+contains none. That is the same shape as the v0.5.1 bug, one signal further down.
+
+So a party defined by apposition now counts as something a chunk can answer with, which
+is what makes it findable at all; marking that one chunk value-bearing moved it from
+absent to fourth of six. The findability signal and the reading are built from the same
+rules, deliberately: a signal that drifts from the reading it serves is the defect
+v0.5.6 spent a release closing for aliases.
+
+Cost on the real corpus: 879 of 92,709 chunks newly count as value-bearing (95.9% →
+96.9%). That is a point *against* the tracked "this signal barely discriminates" debt,
+and it is the price of the feature working.
+
+### What the real corpus taught it, after both reviews had finished
+
+Run over 92,709 real chunks, the finished feature read four names — and three were
+nonsense:
+
+```
+"TCL Confirmed Northwind Systems as the vendor"                <- an investor slide bullet
+"AB XYZQ Grant PQR Confirmed Northwind Systems"                <- the same deck, no bullets
+"LINES 1 AND 22 MAY DELAY THE ORDER AS THE SUPPLIER"  <- an ALL-CAPS invoice note
+"Helios Components Private Limited ("Supplier")"              <- correct
+```
+
+Slide decks are title-cased and invoices are upper-cased, so "is this word capitalised"
+carries no information in them whatsoever, and extracted slide text has no sentence
+punctuation to stop the scan either. Neither review found this — both were reading clean
+prose, and so were all the test fixtures. What separates the one correct answer is that
+a company states its legal form, so the name must now end in one (Ltd, Pvt Ltd, LLP,
+Inc, GmbH, Limited …) unless the role was introduced as a quoted or parenthesised
+defined term. All four lines are now permanent tests.
+
+This makes the feature narrower than its name: it reads a corporate **entity** defined
+by apposition. `IBM as the Vendor` is deliberately missed. A missed name leaves the
+field visibly unanswered, which an agent can act on; a wrong one it cannot.
+
+### From adversarial review of this release
+
+Eight defects in the fix itself, four from each pass:
+
+- **The name ran back across punctuation** — "In January, Helios Components Pvt Ltd"
+  was returned whole, because the scan checked whether each token was capitalised and
+  never what sat between them.
+- **A stray label word hid the apposition.** The label's position was recorded at the
+  first token matching any part of it, so an earlier "legal" pointed the lookback at
+  the start of the sentence and a present answer was reported missing.
+- **An ambiguous clause suppressed a clean one** right after it.
+- **A digit truncated the name**: "Group 4 Sentinel" became "Sentinel" — a different
+  company.
+- **A company was offered as a quantity.** The reading was field-agnostic, so a line
+  saying "… as the limitation of liability" put a company name under Answers for
+  `Liability cap`.
+- **A sentence end with no space joined two sentences** into one name, which is routine
+  in text extracted from PDFs.
+- **A dense line was asserted whenever only one field was asked for**, because "names
+  another field" was decided from the *other* fields on the form — and with one field
+  there are none. "Governing law: Karnataka Helios Pvt Ltd as the Vendor" answered
+  "Karnataka Helios Pvt Ltd".
+- **An over-long name was truncated to fit and asserted** — silently a different entity.
+  It is now refused: when docdex cannot tell where a name begins, it does not answer.
+
+### Known gaps, stated rather than closed
+
+- **"Helios Components Pvt. Ltd." is never read**, because clause splitting cuts at
+  ". " before apposition runs and leaves "Ltd." alone. Tracked as a failing test.
+- **A forward-written name is still not a value.** "Legal name: Beta Holdings Ltd"
+  remains unreadable — company names match no value pattern going forwards. Teaching
+  the forward direction to read names touches every field on every corpus, so it gets
+  its own release rather than riding along here. Pinned by a test so it stays a choice.
+- **The field-type guard is a word list**, standing in for the typed field registry
+  (M6).
+
+### Real corpus
+
+Verified on the real corpus: 92,709 chunks, apposition reads one real party name correctly
+and refuses the three lines that are not names. 426 tests, up from 388. Suite A
+unchanged; suite B **10/11 → 11/11** at 1,424 tokens.
 
 ## [0.5.6] — 2026-07-30 — "Ten things nobody had looked at"
 

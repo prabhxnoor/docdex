@@ -297,19 +297,19 @@ def test_value_tiebreak_never_overrides_real_relevance(tmp_path):
         f"a numeric chunk displaced a genuinely more relevant one: {rels}")
 
 
-# ------------------------------------------------- known gap (tracked) ---------
+# ------------------------------------- closed in v0.5.7 (was a tracked xfail) ---
 
-@pytest.mark.xfail(strict=True, reason=(
-    "v0.5.3 target: apposition — the value PRECEDES the label. Contracts routinely "
-    "name a party as 'Helios Components Pvt Ltd as the Vendor' or \"Acme (the "
-    "'Supplier')\", so the value sits before the label docdex recognises and the "
-    "window after the label is empty. Reading backwards is deliberately not done "
-    "here: unbounded lookback is the cross-field leakage class DDX-029 fixed in "
-    "v0.4.0 ('Payment terms are net-45. Vendor: Acme' would hand net-45 to Legal "
-    "name). Doing it safely needs a required connective, a bounded lookback, and a "
-    "clause-boundary stop — its own change, with its own review."))
 def test_apposition_value_before_the_label(tmp_path):
-    """The benchmark's last remaining miss (`Legal name`, 10/11 -> 11/11)."""
+    """The form benchmark's last miss (`Legal name`), closed in v0.5.7.
+
+    Tracked as a strict xfail from v0.5.2 to v0.5.6: the value PRECEDES the label,
+    so the window after the label is empty. Reading backwards waited for its own
+    release because unbounded lookback is the DDX-029 cross-field leakage class
+    ("Payment terms are net-45. Vendor: Acme" would hand `net-45` to `Legal name`).
+    It is now done behind a required apposition connective, reading only a run of
+    proper nouns — see `tests/test_apposition.py`, whose negative cases are the
+    point of that file.
+    """
     root = tmp_path / "appos"
     root.mkdir()
     (root / "contract.txt").write_text(

@@ -111,7 +111,15 @@ def carries_value(text: str) -> bool:
             return True          # currency, unit, date, month, identifier or email
         if not _STRUCTURAL_REF.search(text[max(0, m.start() - 24):m.start()]):
             return True
-    return False
+    # A party defined by apposition — "Helios Components Pvt Ltd as the Vendor" — is
+    # an answer too, and this is what makes it FINDABLE. Measured on the benchmark
+    # corpus: without this the chunk carrying that line was not in a pool of 60 for
+    # the `Legal name` field, because every candidate ties at BM25 0 (the label's
+    # words are ubiquitous in contract prose) and the has_value tie-break then sorted
+    # every chunk containing any digit above the one chunk that could answer. Exactly
+    # the shape of the v0.5.1 bug, one signal lower down. With it, the chunk enters
+    # the pool at position 4 of 6.
+    return carries_apposition(text)
 STOPWORDS = {
     "the", "and", "for", "with", "from", "this", "that", "all", "any", "our",
     "fill", "find", "form", "please", "using", "about", "what", "which", "name",
@@ -260,16 +268,33 @@ def _terms_end(spans: List[tuple], label_terms: set, stemwise: bool) -> Optional
     window after the SECOND "terms" and returned "apply", dropping a value that was
     present and correctly labelled.
     """
+    span = _terms_span(spans, label_terms, stemwise)
+    return None if span is None else span[1]
+
+
+def _terms_span(spans: List[tuple], label_terms: set, stemwise: bool):
+    """(start, end) of the first complete occurrence of a label, or None.
+
+    The start is where the label PHRASE begins — needed by the apposition fallback,
+    which has to see what introduces the label rather than what follows it.
+
+    "Begins" means the start of the SMALLEST run holding every label token and ending
+    here, not the first token anywhere that happened to match one of them. Locking it
+    to the latter pointed the apposition lookback at the start of the sentence
+    whenever a label word appeared earlier in the clause — "The legal team reviewed it
+    and Acme Corp as the legal name applies" found no connective there and reported a
+    present answer as missing. Found by adversarial review.
+    """
     want = {stem(t) for t in label_terms} if stemwise else set(label_terms)
     if not want:
         return None
-    seen: set = set()
-    for tok, _start, end in spans:
+    last_at: dict = {}
+    for tok, start, end in spans:
         key = stem(tok) if stemwise else tok
         if key in want:
-            seen.add(key)
-            if seen >= want:
-                return end          # every label token seen; value follows here
+            last_at[key] = start
+            if len(last_at) >= len(want):
+                return (min(last_at.values()), end)
     return None
 
 
@@ -281,6 +306,12 @@ def _alias_end(spans: List[tuple], label: str, alias_groups) -> Optional[int]:
     label are considered, and a synonym must appear as a contiguous stemmed run —
     never scattered words that merely co-occur.
     """
+    span = _alias_span(spans, label, alias_groups)
+    return None if span is None else span[1]
+
+
+def _alias_span(spans: List[tuple], label: str, alias_groups):
+    """(start, end) of the earliest declared synonym of this field's label."""
     label_stems = [stem(t) for t in tokenize(label)]
     if not label_stems or not alias_groups:
         return None
@@ -296,18 +327,21 @@ def _alias_end(spans: List[tuple], label: str, alias_groups) -> Optional[int]:
             n = len(ps)
             for i in range(len(text_stems) - n + 1):
                 if text_stems[i:i + n] == ps:
-                    end = spans[i + n - 1][2]
+                    here = (spans[i][1], spans[i + n - 1][2])
                     # FIRST occurrence in reading order. Two synonyms of one field in
                     # one clause is inherently ambiguous ("Vendor: Acme, Supplier:
                     # Beta"); taking the earliest is what a reader would do, and it
                     # matches the exact path's first-complete rule.
-                    best = end if best is None else min(best, end)
+                    if best is None or here[1] < best[1]:
+                        best = here
     return best
 
 
 # Label-match precedence, defined once and used both inside _field_answer and for
 # the cross-candidate comparison in build_packet.
-_HOW_RANK = {"exact": 0, "stem": 1, "alias": 2}
+# `appos` is last: reading a value backwards from sentence structure is the most
+# approximate route there is, so it may only win when nothing else produced anything.
+_HOW_RANK = {"exact": 0, "stem": 1, "alias": 2, "appos": 3}
 
 
 def label_window(text: str, label: str, label_terms: set,
@@ -335,6 +369,267 @@ def label_window(text: str, label: str, label_terms: set,
 def _label_window(text: str, label_terms: set) -> Optional[str]:
     """Exact-only window — kept for callers that must not widen (see label_window)."""
     return label_window(text, " ".join(sorted(label_terms)), label_terms, None)[0]
+
+
+# --------------------------------------------------------------- apposition (v0.5.7)
+#
+# Contracts name a party by stating it and THEN saying what role it plays:
+#
+#     Master agreement with Helios Components Pvt Ltd **as the Vendor**.
+#     Acme Corporation (**the "Supplier"**) shall deliver.
+#
+# Every release before this read a field's value from the text after its label, so
+# the window after the label here is empty and the field reported "matched, no clear
+# value" — the form benchmark's last miss.
+#
+# Reading backwards is the dangerous direction, and it waited for its own release
+# because of it. Unbounded lookback is the DDX-029 cross-field leakage class that
+# v0.4.0 fixed: from "Payment terms are net-45. Vendor: Acme" a backwards reader
+# hands `net-45` to `Legal name`. A confidently wrong answer costs far more than the
+# missing one it replaces, because the agent cannot tell.
+#
+# What makes it safe is not a list of exceptions but the shape of what may be read: a
+# run of PROPER NOUNS immediately before a REQUIRED apposition connective. Values are
+# not capitalised proper nouns, so `net-45`, `24 months` and `INR 6.5 crore` cannot be
+# read this way at all — the whole leakage class is closed by construction.
+
+# The connective must mean "the phrase before me IS the role that follows". A bare
+# comma or a bare "the" does not: "Payment terms are net-45, the Vendor is Acme"
+# would leak. A bare "(" does not either: "liability cap is INR 6.5 crore (Vendor:
+# Acme)" would leak. A parenthesis only counts when it opens a DEFINED TERM.
+_APPOS_CORE = (
+    r"(?:"
+    r"\b(?:acting\s+|solely\s+|collectively\s+)?as\b"
+    r"|\breferred\s+to\s+as\b"
+    r"|\bhereinafter(?:\s+(?:called|known\s+as|referred\s+to\s+as))?\b"
+    r"|\(\s*(?:the\s+)?[\"'“‘]"
+    r"|\(\s*the\b"
+    r")"
+)
+_APPOS_TAIL = r"[\s:,]*(?:the|an?|its|our|their)?[\s\"'“”‘’(]*"
+# Anchored: what sits immediately before a label the caller has already located.
+_APPOS_CONNECTIVE = re.compile(_APPOS_CORE + _APPOS_TAIL + r"$", re.IGNORECASE)
+# Unanchored, for the corpus-wide findability signal — the same connective followed by
+# some word playing the role.
+_APPOS_SCAN = re.compile(_APPOS_CORE + _APPOS_TAIL + r"[^\W\d_]", re.IGNORECASE)
+
+# Lowercase words that are legitimately PART of a company name, so a name written
+# "Helios Components pvt ltd" is not cut off at its own suffix. The run must still
+# contain a capitalised token that is not one of these, so "Company" alone is not a
+# name — which is also why "3M Company" is missed: `3M` is not capitalised by this
+# test. A missed name shows the field as unanswered, which is safe; a wrong one is not.
+_NAME_PART = {
+    "pvt", "private", "ltd", "limited", "llp", "llc", "inc", "incorporated",
+    "co", "corp", "corporation", "company", "companies", "plc", "gmbh", "ag",
+    "sa", "srl", "bv", "nv", "oy", "ab", "pte", "sdn", "bhd", "holdings",
+    "partners", "partnership", "group", "trust", "foundation", "and", "of",
+}
+APPOS_MAX_TOKENS = 8       # a name, not a paragraph: recitals run long
+
+# What may sit between two words of one name. Abbreviation dots ("Pvt. Ltd."),
+# ampersands ("Smith & Sons"), apostrophes and slashes belong to names; a comma,
+# colon, semicolon, bracket or quote ends one. Sentence-ending dots never reach here
+# because `_clauses` has already split on them.
+# A dot joins an abbreviation ("Pvt. Ltd") only when whitespace follows it. Extracted
+# PDF text routinely loses the space after a full stop, and without that condition
+# "Zeta Corporation.Acme Industries Ltd" came back as one company. Found by
+# adversarial review.
+_NAME_JOIN = re.compile(r"\s*|\.\s+|\s*[&'’/\-]\s*")
+
+# Words in a field's own label that say it wants a QUANTITY, not a party. Apposition
+# supplies a corporate entity, and it was field-agnostic: a document reading "Helios
+# Components Pvt Ltd as the limitation of liability" put a company under `## Answers`
+# for `Liability cap`. Found by adversarial review.
+#
+# A word list is a poor substitute for knowing a field's type, and it is explicitly a
+# stand-in until the typed field registry (M6 on the roadmap). It errs toward
+# refusing, which is the safe direction: the value still appears as evidence.
+_QUANTITY_LABEL = {
+    "cap", "amount", "value", "total", "fee", "fees", "price", "cost", "rate",
+    "term", "terms", "date", "dates", "number", "no", "id", "count", "quantity",
+    "percentage", "percent", "duration", "days", "months", "years", "limit",
+    "sum", "budget", "revenue", "turnover", "salary", "tax", "gst", "pan",
+    "ifsc", "code", "period", "deadline", "balance", "discount", "interest",
+}
+
+# A run of capitalised words is NOT enough to be a legal name, and the real corpus is
+# what proved it. Running this feature over 92,709 real chunks read four names, of
+# which three were nonsense and one was right:
+#
+#   "TCL Confirmed Northwind Systems as the vendor"          <- an investor slide bullet
+#   "AB XYZQ Grant PQR Confirmed Northwind Systems"          <- the same deck, no bullet chars
+#   "LINES 1 AND 22 MAY DELAY THE ORDER AS THE ..." <- an ALL-CAPS invoice note
+#   "Helios Components Private Limited (\"Supplier\")"        <- correct
+#
+# Slide decks are title-cased and invoices are upper-cased, so "is this word
+# capitalised" carries no information in them at all, and extracted deck text has no
+# sentence punctuation to stop the scan either. What separates the one right answer is
+# that a company states its legal form. So the run must END in a corporate form —
+# unless the label was introduced as a quoted or parenthesised DEFINED TERM, which is
+# itself a deliberate act of naming.
+#
+# This makes the feature narrower than "apposition" in general: it reads a corporate
+# ENTITY defined by apposition. "IBM as the Vendor" and "Group 4 Sentinel as the
+# Vendor" are missed. That is the intended direction — a missed name shows the field
+# as unanswered, which an agent can act on; a wrong one it cannot.
+_CORPORATE_FORM = {
+    "ltd", "limited", "pvt", "private", "llp", "llc", "inc", "incorporated",
+    "corp", "corporation", "co", "company", "companies", "plc", "gmbh", "ag",
+    "sa", "srl", "bv", "nv", "oy", "ab", "pte", "sdn", "bhd", "kg", "kk",
+    "spa", "aps", "oyj", "asa", "pty", "trust", "foundation", "partnership",
+}
+
+
+def _proper_name_before(text: str, at: int, defined_term: bool = False) -> str:
+    """The run of proper-noun tokens immediately before offset `at`, or "".
+
+    Scans right to left from `at` and stops at the first token that is neither
+    capitalised nor a recognised name part. The result must contain at least one
+    capitalised token that is not merely a corporate suffix, is capped at
+    `APPOS_MAX_TOKENS` so a long capitalised recital cannot become "the name", and —
+    unless `defined_term` — must END in a corporate form (see `_CORPORATE_FORM` for
+    what the real corpus proved about that).
+    """
+    spans = [(m.group(0), m.start(), m.end())
+             for m in _TOKEN_SPAN_RE.finditer(text[:at])]
+    kept: List[tuple] = []
+    right_edge = at
+    for idx in range(len(spans) - 1, -1, -1):
+        tok, start, end = spans[idx]
+        # What sits BETWEEN this token and what has already been accepted to its
+        # right. Checking only whether each token was capitalised read "In January,
+        # Helios Components Pvt Ltd" as one company name — punctuation, unrelated
+        # words and all — and asserted it as the entity's legal name. A corrupted name
+        # is worse than no name. Found by adversarial review.
+        if not _NAME_JOIN.fullmatch(text[end:right_edge]):
+            break
+        if tok[:1].isupper() or tok.lower() in _NAME_PART:
+            kept.append((tok, start, end))
+        elif kept and tok.isdigit() and idx and spans[idx - 1][0][:1].isupper():
+            # A digit may sit INSIDE a name — "Group 4 Sentinel" is one company, and
+            # returning "Sentinel" names a different one. Never at the right edge
+            # though (`kept` must already hold something): that edge is exactly where
+            # another field's value sits, and refusing it is what keeps `net-45` and
+            # `24 months` unreadable as names.
+            kept.append((tok, start, end))
+        else:
+            break
+        right_edge = start
+        if len(kept) >= APPOS_MAX_TOKENS:
+            # More name-like tokens still to the left means the name is longer than
+            # can be read safely, and cutting it to fit would silently return a
+            # DIFFERENT entity. Refuse instead. Found by adversarial review.
+            if idx and _NAME_JOIN.fullmatch(text[spans[idx - 1][2]:start]) and (
+                    spans[idx - 1][0][:1].isupper()
+                    or spans[idx - 1][0].lower() in _NAME_PART):
+                return ""
+            break
+    # Drop leading name-parts and digits: "of Baroda" is not a name, "Bank of
+    # Baroda" is; "4 Sentinel" is not, "Group 4 Sentinel" is.
+    while kept and not kept[-1][0][:1].isupper():
+        kept.pop()
+    if not kept:
+        return ""
+    if not any(t[:1].isupper() and t.lower() not in _NAME_PART for t, _s, _e in kept):
+        return ""                      # only suffixes: "Company", "Ltd" — not a name
+    if not defined_term and kept[0][0].lower().rstrip(".") not in _CORPORATE_FORM:
+        return ""                      # a capitalised run is not a legal name
+    return text[kept[-1][1]:kept[0][2]].strip()
+
+
+def _name_follows_a_label(text: str, name: str) -> bool:
+    """Does a `Label:` sit immediately before this name?
+
+    Then the run may have absorbed that label's value — "Governing law: Karnataka
+    Helios Pvt Ltd" reads back as one name. Structural, so it does not depend on which
+    other fields the caller happened to ask for: deciding this from the form's OTHER
+    labels meant a single-field request had nothing foreign to compare against and the
+    merged name was asserted outright. Found by adversarial review.
+    """
+    at = text.find(name)
+    return at > 0 and text[:at].rstrip().endswith((":", "_"))
+
+
+def carries_apposition(text: str) -> bool:
+    """Does this text define a party by apposition anywhere in it?
+
+    The findability half of the feature (see `carries_value`). Deliberately built from
+    the SAME connective and proper-noun rules the extractor uses, rather than a
+    separate pattern that approximates them: a signal that decides which chunks are
+    reachable, drifting from the reading that answers the field, is precisely the
+    defect v0.5.6 spent a release closing for aliases.
+    """
+    for m in _APPOS_SCAN.finditer(text):
+        if _proper_name_before(text, m.start(), "(" in m.group(0)):
+            return True
+    return False
+
+
+def apposition_before(text: str, end: int) -> str:
+    """The name defined as the role that starts at `end`, or "".
+
+    `end` is the offset just past the label. Requires an apposition connective
+    immediately before the label and a proper-noun run immediately before that.
+    """
+    before = text[:end]
+    # The label itself has already been consumed by the caller, so strip it back off
+    # to see what introduces it.
+    m = _APPOS_CONNECTIVE.search(before)
+    if not m:
+        return ""
+    # A quoted or parenthesised defined term — `Acme (the "Supplier")` — is a
+    # deliberate act of naming, so it stands in for the corporate-form requirement.
+    return _proper_name_before(before, m.start(), "(" in m.group(0))
+
+
+def _role_follows(text: str, label: str, label_terms: set, alias_groups) -> bool:
+    """Does `text` BEGIN with this field's label, or a declared synonym of it?
+
+    Used to confirm that what an apposition connective introduces really is this
+    field's role, and not some other word.
+    """
+    spans = _token_spans(text)
+    if not spans:
+        return False
+    head = [tok for tok, _s, _e in spans[:max(len(label_terms), 1) + 2]]
+    head_stems = [stem(t) for t in head]
+    if label_terms <= set(head) or {stem(t) for t in label_terms} <= set(head_stems):
+        return True
+    label_stems = [stem(t) for t in tokenize(label)]
+    for group in alias_groups or []:
+        phrase_stems = [[stem(t) for t in tokenize(p)] for p in group]
+        if label_stems not in phrase_stems:
+            continue                   # this group is not about this field
+        for ps in phrase_stems:
+            if ps and head_stems[:len(ps)] == ps:
+                return True
+    return False
+
+
+def apposition_window(text: str, label: str, label_terms: set,
+                      alias_groups=None) -> tuple:
+    """(name defined as this field's role, "appos") or (None, None).
+
+    A strict FALLBACK: `_field_answer` only reaches here when no clause yields a value
+    in the ordinary forward direction, so this can never displace a real
+    label-then-value reading.
+
+    Driven from the CONNECTIVES rather than from the label's position, because a
+    clause can name the field's role more than once and only one of them is the
+    definition. A real partner agreement reads "1.1 Parties The parties to the present
+    agreement are: Helios Components Private Limited ("Supplier")" — `parties` and `Supplier`
+    are both synonyms of `Legal name`, and looking only at the first put the lookback
+    at the start of a heading. Enumerating connectives finds each candidate naming
+    site, and every one still has to pass the same guards.
+    """
+    for m in _APPOS_SCAN.finditer(text):
+        # `_APPOS_SCAN` consumes the first letter of the role, so back up one.
+        if not _role_follows(text[m.end() - 1:], label, label_terms, alias_groups):
+            continue
+        name = _proper_name_before(text, m.start(), "(" in m.group(0))
+        if name:
+            return name, "appos"
+    return None, None
 
 
 def _value_lines(text: str, terms: set) -> List[str]:
@@ -460,7 +755,40 @@ def _field_answer(text: str, label: str, label_terms: set, foreign_terms: set,
             best = (key, value, display, clean, how)
         if key == (0, 0):
             break                   # exact label, clean window — nothing can beat it
-    return None if best is None else (best[1], best[2], best[3], best[4])
+    if best is not None:
+        return (best[1], best[2], best[3], best[4])
+
+    # Only now: the value may PRECEDE the label ("… as the Vendor"). Reached only when
+    # no clause produced a value in the ordinary direction, so a real label-then-value
+    # reading always wins and this can never reorder an existing answer.
+    # Ranked the same way the forward path ranks: a clean reading first, then the
+    # first seen. Returning the first clause that produced anything let an ambiguous
+    # reading suppress an unambiguous one right after it, reporting a weak answer
+    # where a found one was available. Found by adversarial review.
+    # Apposition supplies a corporate entity, so a field whose own label asks for a
+    # quantity is not a candidate for it at all.
+    if {t.lower() for t in tokenize(label)} & _QUANTITY_LABEL:
+        return None
+    fallback = None
+    for clause in _clauses(text):
+        name, how = apposition_window(clause, label, label_terms, alias_groups)
+        if not name:
+            continue
+        # A dense clause carrying two fields cannot be read backwards safely: there is
+        # no delimiter saying where the previous field's value ended, so the name may
+        # have been merged with it. `clean=False` sends it to the weak tier instead of
+        # being asserted (the same treatment the forward path gives a dense window).
+        clean = (not (foreign_terms & set(tokenize(clause)))
+                 and not _name_follows_a_label(clause, name))
+        # The displayed region IS the name. Forward readings show the window after the
+        # label because the value sits at its head with useful context behind it; here
+        # the name is exactly and only what was read, and showing the whole clause
+        # would present text the reading did not rely on as though it had.
+        if clean:
+            return (name, name, True, how)
+        if fallback is None:
+            fallback = (name, name, False, how)
+    return fallback
 
 
 def _content_terms(task: str) -> List[str]:

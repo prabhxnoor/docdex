@@ -30,7 +30,11 @@ from docdex.config import DocdexError, Project
 from docdex.inventory import read_inventory
 from docdex.search import tokenize
 
-SCHEMA_VERSION = "5"   # v5: files.size, so a file with no hash is tracked by
+SCHEMA_VERSION = "6"   # v6: `has_value` now counts a party defined by apposition, so
+#                        every existing index must recompute it or the retrieval half
+#                        of that feature stays inert (the column already exists, so
+#                        nothing but a version change forces the recomputation).
+#                        v5: files.size, so a file with no hash is tracked by
 #                        mtime+size (see _index_is_current) — v4 added
 #                        chunks.has_value, a tie-break signal (see _mirror_rows).
                        # v3: dual FTS (porter + unicode61), max-score fusion.

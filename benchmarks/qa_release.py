@@ -125,8 +125,16 @@ def pytest_run(tree: Path, targets: list = None, env: dict = None) -> dict:
             msg = (failure.get("message") or "").lstrip()
             kind = (failure.get("type")
                     or msg.split(":", 1)[0]).rsplit(".", 1)[-1].strip()
-            (out["assertion"] if kind in ("AssertionError", "Failed")
-             else out["other"]).append(node)
+            # A BARE `assert x in y` — no custom message — produces a JUnit message
+            # that starts with the expression itself and carries no "AssertionError:"
+            # prefix at all, so the prefix rule above filed it under "raised, not an
+            # assertion" and gate 3 refused perfectly good evidence. Found when this
+            # release's own historical xfail was rejected. A lowercase `assert ` prefix
+            # is pytest's own rendering and is far tighter than the substring test that
+            # was rightly rejected above.
+            looks_asserted = kind in ("AssertionError", "Failed") or msg.startswith(
+                "assert ")
+            (out["assertion"] if looks_asserted else out["other"]).append(node)
         for _ in errs:
             out["errors"].append(node)
         if skips:

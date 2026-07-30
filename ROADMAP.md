@@ -6,7 +6,30 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-07-30 (SHIPPED **v0.5.6 "Ten things nobody had looked at"** —
+> _Last updated: 2026-07-30 (SHIPPED **v0.5.7 "The name before the label"** — the form
+> benchmark reads **11/11 for the first time**, at fewer tokens than 10/11 cost.
+> Contracts name a company and then say what role it plays ("Helios Components Pvt Ltd
+> **as the Vendor**"), and every release until now read a field's value from the text
+> AFTER its label, so it found the label, looked forward, saw nothing and reported
+> "matched, no clear value". Deferred four times because reading backwards is the
+> direction that leaks: from "Payment terms are net-45. Vendor: Acme" a careless
+> backward reader hands `net-45` to `Legal name`. Made safe by the shape of what may be
+> read — a proper-noun run ending in a legal form, immediately before a required
+> connective — so amounts and dates cannot be read this way at all. It needed TWO
+> changes, and only measurement showed why: the chunk carrying the benchmark's own
+> apposition line was not in a candidate pool of 60, because every candidate ties at
+> BM25 0 and the v0.5.2 `has_value` tie-break sorted every chunk containing a digit
+> above the one chunk that could answer. Then the real corpus taught it what neither
+> review did: of four names it read across 92,709 chunks, three were nonsense from a
+> title-cased investor deck and an ALL-CAPS invoice note, where "is this word
+> capitalised" carries no information — hence the corporate-form requirement, and hence
+> a feature narrower than its name (it reads a corporate ENTITY defined by apposition;
+> `IBM as the Vendor` is deliberately missed). 8 defects in the fix itself came out of
+> the two review passes. 54 findings: 12 fixed, 5 refuted by measurement. 426 tests, up
+> from 388. Three gaps are stated rather than closed, including that a forward-written
+> name is still not a value.)_
+>
+> _Previously: 2026-07-30 (SHIPPED **v0.5.6 "Ten things nobody had looked at"** —
 > the first release driven by reviewing the whole product instead of the last change,
 > which is why nine of its ten defects had sat in place for several releases. Two gave
 > wrong answers on the real corpus: `--folder` went into a SQL `LIKE` unescaped, so
@@ -367,7 +390,11 @@ are what remain, and they are **v0.5.2 ← next**.
   token offsets: the old `rfind()` substring search would have located the stem
   `govern` inside `government`. Strict exact→stem→synonym precedence, so a literal
   label present anywhere always decides.
-- ⬜ **Apposition: a value written BEFORE its label** — "Helios Components Pvt Ltd
+- ✅ **Apposition: a value written BEFORE its label** — shipped v0.5.7; took the
+  form benchmark to 11/11. Reads a corporate ENTITY defined by apposition, behind a
+  required connective; see `docdex-qa/v0.5.7/ADJUDICATION.md` for why it is narrower
+  than the name suggests. Superseded text below kept for the record:
+- ✅ (was) — "Helios Components Pvt Ltd
   **as the Vendor**", "Acme (the **Supplier**)". The standard way contracts name a
   party, and the benchmark's last miss (`Legal name`). **→ v0.5.7** (v0.5.4 went to
   repairing the schema-upgrade regression, v0.5.5 to the three false or unactionable
@@ -379,7 +406,7 @@ are what remain, and they are **v0.5.2 ← next**.
   its own review rather than riding along with something else.
 - ⬜ **Optional embeddings / RRF** via `DOCDEX_EMBED_CMD` (local-only) for pure
   paraphrase and folder discovery — exact IDs, amounts, dates, and missing-evidence
-  honesty stay lexical/structured. **→ v0.5.8** (was v0.5.1, which the precision fix took,
+  honesty stay lexical/structured. **→ v0.5.8 (NEXT)** (was v0.5.1, which the precision fix took,
   then pushed by the Spotlight fix, the schema-upgrade repair, its follow-up, the
   whole-product review, and apposition); off by
   default, needs a local embedder. Note v0.5.1 already built the
@@ -738,6 +765,44 @@ not oversights — each was reproduced or reasoned about, none is fixed):
   bytes across hash seeds, but the fixture never produces the large blocks of
   equal-scoring chunks where set-iteration order would actually show. Needs a stress
   corpus of hundreds of tied chunks across several queries.
+
+**Raised by the v0.5.7 round and deliberately deferred:**
+
+- ⬜ **A forward reading of a SYNONYM window can return a clause, not a value.**
+  Pre-existing, and v0.5.7 made it visible: on the real partner agreement `Legal name`
+  matches the alias "Supplier" and the window after it happens to contain "sixty (60)
+  days", so the field answers with a sentence about invoicing — and because a forward
+  reading always outranks apposition, the correct party name never gets a chance in
+  that chunk. Unchanged from v0.5.6 (the forward path was not touched), but it caps
+  what apposition can achieve in practice: it answered `Legal name` in 4 real documents,
+  all correctly ("Helios Components Private Limited"), and could have in more. Wants a
+  plausibility check on a forward window — a value region that reads as a full clause
+  is probably not a field value.
+
+- ⬜ **A forward-written name is still not a value.** "Legal name: Beta Holdings Ltd" is
+  labelled and unreadable, because a company name matches no value pattern going
+  forwards — only the backward apposition path can read names. Teaching the forward
+  direction to read them changes found/weak for every field on every corpus (and would
+  answer "Payment terms: See Schedule B" with "Schedule B"), so it needs its own release
+  and its own review. Pinned by a test so it stays a decision.
+- ⬜ **Clause splitting cuts abbreviations.** "Helios Components Pvt. Ltd." is never
+  seen whole because `_clauses` splits on ". " first. Tracked as a strict xfail. Fixing
+  it touches every value line, conflict key and field window.
+- ⬜ **A field's expected TYPE is a word list.** Apposition refuses fields whose label
+  contains "cap", "amount", "date"… because a corporate entity cannot answer them. That
+  is a stand-in for M6's typed field registry, and it is a heuristic that will be wrong
+  for some label somebody writes.
+- ⬜ **The benchmark harness reports no source for any approximate answer.** Its
+  attribution parser anchors the citation at the end of the line, and `~approx` comes
+  after it — so gate 2's per-field source comparison is blind for every `~approx`
+  field, which is now most interesting ones. Found while checking v0.5.7's own
+  attribution. Deliberately NOT fixed inside v0.5.7: gate 0 fails a release that edits
+  the harness grading it, and that rule is worth more than this fix. **First item for
+  v0.5.8.**
+- ⬜ **`has_value` moved the wrong way.** Recognising apposition-defined parties added
+  879 of 92,709 chunks (95.9% → 96.9%), against the v0.5.6 debt item saying this signal
+  already barely discriminates. Necessary for findability; it makes the sharpening work
+  more urgent, not less.
 
 **Raised by the v0.5.6 whole-product review and deliberately deferred** (65 findings
 across three passes — see `docdex-qa/v0.5.6/ADJUDICATION.md`; 26 fixed, 4 refuted by
