@@ -5,6 +5,7 @@ import time
 from typing import List, Tuple
 
 from docdex import extract as ex
+from docdex import index_db
 from docdex import search as searchmod
 from docdex import semantic, vision
 from docdex.config import (LEGACY_STATE_DIRS, Project,
@@ -53,6 +54,60 @@ class Doctor:
                     "extracted text is not indexed by Spotlight" if not exposed
                     else f"EXPOSED to Spotlight: {exposed} — run `docdex sync` to "
                          f"move state into a .noindex directory")
+
+    def check_lexical_index(self) -> None:
+        """Can the keyword index actually match anything?
+
+        A failed schema upgrade left both FTS mirrors present but empty while all
+        92,490 chunks of text sat in `chunks`. Every query then returned "no matches"
+        — for the whole corpus, with no error anywhere — and every check here passed.
+        `COUNT(*)` on an external-content FTS5 table reads the content table, so it
+        reported a full index; only FTS5's own view of the inverted index reveals it.
+        """
+        if not index_db.available(self.project):
+            self.record("lexical index", True, "not built (run `docdex sync`)")
+            return
+        conn = index_db.connect(self.project)
+        try:
+            state = index_db.index_state(conn)
+        finally:
+            conn.close()
+        empty = [t for t, n in state["mirrors"].items() if n == 0]
+        unknown = [t for t, n in state["mirrors"].items() if n is None]
+        if not state["chunks"]:
+            self.record("lexical index", True, "no chunks indexed yet")
+        elif state["empty"]:
+            self.record("lexical index", False,
+                        f"{state['chunks']:,} chunks of text are stored but the "
+                        f"index has NOTHING indexed — every search reports no "
+                        f"matches; run `docdex sync` to rebuild")
+        elif state["incomplete"]:
+            worst = min(n for n in state["mirrors"].values() if n is not None)
+            self.record("lexical index", False,
+                        f"only {worst:,} of {state['chunks']:,} chunks are indexed "
+                        f"— searches cover part of your documents; run `docdex "
+                        f"sync` to rebuild")
+        elif state["unverified"]:
+            # Found by adversarial review: this used to fall through to PASS, so an
+            # index that could not be checked was reported as checked and healthy.
+            self.record("lexical index", False,
+                        f"could not verify mirror(s) {unknown} — health unknown, so "
+                        f"a search reporting no matches cannot be trusted; run "
+                        f"`docdex sync` to rebuild")
+        elif state["partial"]:
+            # Not fatal, but it degrades ranking silently rather than failing: both
+            # mirrors exist so a term selective in either space can win.
+            self.record("lexical index", False,
+                        f"mirror(s) {empty} have nothing indexed — ranking is "
+                        f"degraded; run `docdex sync` to rebuild")
+        elif state["missing"]:
+            self.record("lexical index", False,
+                        f"mirror(s) {state['missing']} absent — this index predates "
+                        f"the current schema; run `docdex sync` to rebuild")
+        else:
+            self.record("lexical index", True,
+                        f"{state['chunks']:,} chunks searchable in "
+                        f"{len(state['mirrors'])} term spaces")
 
     def check_inventory_schema(self) -> bool:
         path = self.project.inventory_path
@@ -169,6 +224,7 @@ def run_doctor(project: Project, no_sha: bool = False, e2e: bool = False) -> int
     print(f"docdex doctor — {project.root}")
     d.check_layout()
     d.check_hidden_from_desktop_search()
+    d.check_lexical_index()
     if d.check_inventory_schema():
         d.check_rows_on_disk(no_sha)
         d.check_cache_coverage()

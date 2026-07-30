@@ -26,7 +26,7 @@ import time
 from typing import List, Optional
 
 from docdex import tokens as tok
-from docdex.config import Project
+from docdex.config import DocdexError, Project
 from docdex.inventory import read_inventory
 from docdex.search import tokenize
 
@@ -103,21 +103,66 @@ def fts5_available(conn: sqlite3.Connection) -> bool:
         return False
 
 
+# The tables a schema change may redefine, in an order safe to drop: the FTS mirrors
+# name `chunks` as their external content, so they go first. `meta` is deliberately
+# absent — it holds the version number that decides whether to do any of this.
+DERIVED_TABLES = ("chunks_fts_exact", "chunks_fts", "chunks", "files")
+
+_TABLE_SQL = (
+    "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)",
+    "CREATE TABLE IF NOT EXISTS files("
+    "rel TEXT PRIMARY KEY, sha1 TEXT, mtime_iso TEXT, ext TEXT, "
+    "top_folder TEXT, tokens INTEGER)",
+    "CREATE TABLE IF NOT EXISTS chunks("
+    "chunk_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+    "rel TEXT, chunk_index INTEGER, start_offset INTEGER, "
+    "end_offset INTEGER, tokens INTEGER, text TEXT, "
+    "has_value INTEGER DEFAULT 0)",
+    "CREATE INDEX IF NOT EXISTS chunks_rel ON chunks(rel)",
+)
+
+
+def _expected_chunk_columns() -> set:
+    """The columns `chunks` should have, read from the DDL that creates it.
+
+    Derived rather than declared so this check can never drift from the definition
+    it is checking — a hand-written copy of the column list is one more thing to
+    forget when a column is added, which is how this release's bug began.
+    """
+    probe = sqlite3.connect(":memory:")
+    try:
+        for stmt in _TABLE_SQL:
+            probe.execute(stmt)
+        return {r[1] for r in probe.execute("PRAGMA table_info(chunks)")}
+    finally:
+        probe.close()
+
+
+def _needs_rebuild(conn: sqlite3.Connection, stored_ver: Optional[str]) -> bool:
+    """Must the derived tables be recreated before anything is indexed?
+
+    Two independent signals, because the recorded version alone is not enough. A
+    database whose `meta` row for 'schema' is missing reports no version at all, so a
+    version comparison sees nothing to do while `chunks` still carries its old column
+    list — and the crash simply waits for the next changed file to insert a row.
+    Found by adversarial review of this very fix. So the real table shape is checked
+    too, and either mismatch is enough.
+    """
+    if stored_ver is not None and stored_ver != SCHEMA_VERSION:
+        return True
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(chunks)")}
+    if not cols:
+        return False          # no `chunks` yet: a fresh database, nothing to redo
+    return cols != _expected_chunk_columns()
+
+
 def _init_schema(conn: sqlite3.Connection, has_fts: bool) -> None:
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
-        CREATE TABLE IF NOT EXISTS files(
-            rel TEXT PRIMARY KEY, sha1 TEXT, mtime_iso TEXT, ext TEXT,
-            top_folder TEXT, tokens INTEGER);
-        CREATE TABLE IF NOT EXISTS chunks(
-            chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            rel TEXT, chunk_index INTEGER, start_offset INTEGER,
-            end_offset INTEGER, tokens INTEGER, text TEXT,
-            has_value INTEGER DEFAULT 0);
-        CREATE INDEX IF NOT EXISTS chunks_rel ON chunks(rel);
-        """
-    )
+    # One statement at a time, NOT executescript: executescript commits any pending
+    # transaction before it runs. That would split the schema upgrade away from the
+    # rebuild that completes it, which is the whole reason a half-finished upgrade was
+    # able to leave an empty index on disk.
+    for stmt in _TABLE_SQL:
+        conn.execute(stmt)
     if has_fts:
         # `porter` stems both the indexed text and MATCH terms, so "governing"
         # finds "governed" (recall). unicode61 keeps the existing folding.
@@ -147,25 +192,47 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
     inventory = read_inventory(project.inventory_path)
     conn = _open_for_build(project, quiet=quiet)
     try:
-        # A schema/tokenizer upgrade (e.g. v1 unicode61 -> v2 porter) can't take
-        # effect via CREATE ... IF NOT EXISTS on an existing DB. Detect a version
-        # change, drop the FTS mirror, and force a full reindex so the new
-        # tokenizer applies. Rebuilt from the .txt caches (the source of truth).
         try:
             stored = conn.execute(
                 "SELECT value FROM meta WHERE key='schema'").fetchone()
             stored_ver = stored[0] if stored else None
         except sqlite3.Error:
             stored_ver = None
-        if stored_ver is not None and stored_ver != SCHEMA_VERSION:
-            conn.execute("DROP TABLE IF EXISTS chunks_fts")
-            conn.execute("DROP TABLE IF EXISTS chunks_fts_exact")
+        upgrading = _needs_rebuild(conn, stored_ver)
+
+        # Probed before the transaction opens: on a build without FTS5 this raises
+        # and is caught, and a failed statement has no business inside the unit of
+        # work that protects the index.
+        has_fts = fts5_available(conn)
+
+        # ONE transaction for the schema change AND the rebuild that completes it.
+        # SQLite makes DDL transactional, but Python's sqlite3 starts an implicit
+        # transaction only for DML — measured: `in_transaction` is still False right
+        # after a DROP. So the drops below used to commit on the spot and outlive any
+        # later failure, leaving mirrors that existed but held nothing, while the
+        # `meta` write recording the new version rolled back with the DML and left the
+        # same destruction to repeat on the next sync. An explicit BEGIN makes the
+        # upgrade all-or-nothing: if anything fails, the index that was working is
+        # still the index on disk.
+        conn.execute("BEGIN IMMEDIATE")
+
+        if upgrading:
+            # A schema change can redefine an EXISTING table, not just add new ones,
+            # and `CREATE TABLE IF NOT EXISTS` cannot express that — on a database
+            # that already had `chunks`, v0.5.2's new `has_value` column was silently
+            # never added and every sync then died inserting into it. Recreating the
+            # derived tables handles any change, including a tokenizer change, with no
+            # per-version migration ladder to keep correct. It costs nothing: the
+            # reindex below already re-reads every chunk from the `.txt` caches, which
+            # are the source of truth. `meta` survives, so this stays diagnosable.
+            for table in DERIVED_TABLES:
+                conn.execute(f"DROP TABLE IF EXISTS {table}")
             force = True
             if not quiet:
-                print(f"Lexical index: schema {stored_ver}->{SCHEMA_VERSION}; "
+                was = stored_ver if stored_ver is not None else "unrecorded"
+                print(f"Lexical index: schema {was}->{SCHEMA_VERSION}; "
                       "rebuilding once from caches")
 
-        has_fts = fts5_available(conn)
         _init_schema(conn, has_fts)
 
         prior = {r["rel"]: r["sha1"] for r in conn.execute("SELECT rel, sha1 FROM files")}
@@ -225,6 +292,14 @@ def build(project: Project, force: bool = False, quiet: bool = False) -> dict:
             print(f"Lexical index: files={total_files} chunks={total_chunks} "
                   f"engine={engine} (reindexed {len(changed)})")
         return result
+    except BaseException:
+        # Includes KeyboardInterrupt: a sync interrupted halfway through a rebuild
+        # must leave the previous index answering queries, not an empty one.
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
     finally:
         conn.close()
 
@@ -248,6 +323,118 @@ def available(project: Project) -> bool:
         return False
     finally:
         conn.close()
+
+
+class IndexEmptyError(DocdexError):
+    """Every FTS mirror is empty, so no query can match anything.
+
+    Deliberately not an empty result list: the caller cannot tell those apart, and
+    answering "not found" about an entire corpus — confidently, with no way to
+    notice — is the one failure this project exists to refuse.
+    """
+
+
+def indexed_rows(conn: sqlite3.Connection, table: str) -> Optional[int]:
+    """How many rows this FTS mirror has actually indexed.
+
+    `SELECT COUNT(*) FROM chunks_fts` cannot answer this. For an external-content
+    FTS5 table that count is proxied to the *content* table, so a wiped index still
+    reports a full row count — exactly how a corpus-wide index wipe went unnoticed.
+
+    Counting *rows* rather than asking "any terms at all?" was the answer to two
+    review findings at once. A corpus of nothing but punctuation legitimately indexes
+    zero terms, so a term-based probe would have called a healthy index broken; and a
+    mirror that indexed only its first row holds terms, so a term-based probe would
+    have called a badly incomplete index healthy. Row count separates all three:
+    equal to the chunk count is healthy, zero is wiped, in between is incomplete.
+
+    Returns None when the question can't be answered, which callers report as
+    unverified rather than assuming either answer.
+    """
+    try:
+        return conn.execute(f"SELECT COUNT(*) FROM {table}_docsize").fetchone()[0]
+    except sqlite3.Error:
+        return None
+
+
+def _existing_mirrors(conn: sqlite3.Connection) -> List[str]:
+    """Which FTS mirrors this database actually has.
+
+    Checked separately from probing them so "this schema never had that mirror" is
+    never confused with "the probe failed" — an older single-mirror database is
+    normal, an unanswerable probe is not.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+            "('chunks_fts', 'chunks_fts_exact')").fetchall()
+    except sqlite3.Error:
+        return []
+    return [r[0] for r in rows]
+
+
+def index_state(conn: sqlite3.Connection) -> dict:
+    """What the lexical index actually contains, for reporting and for refusing.
+
+    `chunks` is the stored text; the mirrors are what makes it findable. The state
+    that matters is "text present, index empty" — what a failed upgrade left behind,
+    in which every query returns nothing and looks like a clean miss.
+
+    `unverified` exists because of adversarial review of this fix: an unanswerable
+    probe used to be filtered out, which made an index that could not be checked
+    indistinguishable from one checked and found healthy. Not knowing is reported as
+    not knowing.
+    """
+    try:
+        chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    except sqlite3.Error:
+        chunks = 0
+    present = _existing_mirrors(conn)
+    mirrors = {t: indexed_rows(conn, t) for t in present}
+    counted = [n for n in mirrors.values() if n is not None]
+    return {
+        "chunks": chunks,
+        "mirrors": mirrors,
+        "missing": [t for t in ("chunks_fts", "chunks_fts_exact")
+                    if t not in present],
+        # Nothing indexed at all, though text is stored: the wipe.
+        "empty": bool(chunks) and bool(counted) and all(n == 0 for n in counted),
+        # Some rows indexed but not all: a rebuild that stopped early would answer
+        # for part of the corpus and silently miss the rest.
+        "incomplete": bool(chunks) and any(0 < n < chunks for n in counted),
+        "unverified": bool(chunks) and any(n is None for n in mirrors.values()),
+        # One mirror indexed, the other empty: ranking degrades without failing.
+        "partial": bool(chunks) and any(n > 0 for n in counted)
+                   and any(n == 0 for n in counted),
+    }
+
+
+def _refuse_if_index_is_empty(project: Project) -> None:
+    conn = connect(project)
+    try:
+        state = index_state(conn)
+    finally:
+        conn.close()
+    if state["empty"]:
+        raise IndexEmptyError(
+            f"the lexical index holds no searchable terms, though "
+            f"{state['chunks']:,} chunks of text are stored — every query would "
+            f"report no matches. Run `docdex sync` to rebuild the index.")
+    if state["incomplete"]:
+        indexed = min(n for n in state["mirrors"].values() if n is not None)
+        raise IndexEmptyError(
+            f"the lexical index covers only {indexed:,} of {state['chunks']:,} "
+            f"stored chunks, so this query searched part of your documents — a "
+            f"result of 'no matches' cannot be trusted. Run `docdex sync` to "
+            f"rebuild the index.")
+    if state["unverified"]:
+        # A miss we cannot vouch for is not reported as a miss. Returning [] here
+        # would be indistinguishable from "your documents don't say that".
+        raise IndexEmptyError(
+            f"this query matched nothing, and whether the lexical index is intact "
+            f"could not be verified ({state['chunks']:,} chunks of text are "
+            f"stored) — so 'no matches' cannot be trusted. Run `docdex sync` to "
+            f"rebuild the index.")
 
 
 def _has_value_column(conn) -> bool:
@@ -331,7 +518,12 @@ def search(project: Project, query: str, folder: Optional[str] = None,
         stem_rows = _mirror_rows(conn, "chunks_fts", match, folder, pool)
     finally:
         conn.close()
-    return _fuse([exact_rows, stem_rows], limit)
+    rows = _fuse([exact_rows, stem_rows], limit)
+    if not rows:
+        # Only on a miss, so the healthy path pays nothing: distinguish "this corpus
+        # doesn't say that" from "this index can't answer anything".
+        _refuse_if_index_is_empty(project)
+    return rows
 
 
 def _fuse(mirrors: List[List], limit: int) -> List[dict]:

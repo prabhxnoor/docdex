@@ -10,9 +10,89 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Next: **v0.5.4** — reading a value that sits *before* its label ("Helios Components
+Next: **v0.5.5** — reading a value that sits *before* its label ("Helios Components
 Pvt Ltd **as the Vendor**"), the last form-filling gap; then optional embeddings /
 RRF via `DOCDEX_EMBED_CMD`. See [ROADMAP.md](ROADMAP.md).
+
+## [0.5.4] — 2026-07-30 — "The upgrade that broke the index"
+
+**A regression this project shipped, found by the user: after v0.5.2, `docdex sync`
+crashed and keyword search returned nothing at all — across an entire 10,498-file
+corpus, without saying so.** No document text was ever lost; the search index was.
+
+**In plain terms.** v0.5.2 added a new column to the table that stores your text.
+Creating a table only does something when the table doesn't exist yet, so on any
+index that already existed the column was never added — and `sync` then died trying
+to write to it. Worse, the step just before that deletes the two keyword indexes so
+they can be rebuilt, and *that* deletion was already saved to disk by the time the
+crash happened. So every sync deleted the working index, failed, and left an empty
+one behind. An empty index matches nothing, and "nothing matched" looked exactly
+like "your documents don't mention that". docdex answered "not here" about 10,498
+files, confidently, ten thousand times over.
+
+### Fixed
+
+- **`sync` upgrades an existing index instead of crashing on it.** A version change
+  now recreates the derived tables at their current definition rather than trying to
+  patch them, so a new column needs no bespoke migration step. This costs nothing:
+  the upgrade already re-reads every chunk from the `.txt` caches, which are the
+  source of truth. Verified on the real 10,501-file corpus: schema 3 → 4 in 46
+  seconds, 92,507 chunks searchable again.
+- **A failed upgrade can no longer destroy a working index.** The schema change and
+  the rebuild that completes it are now one transaction, so if anything fails — an
+  error, a full disk, Ctrl-C — the index that was working is still the index on disk.
+  SQLite has always made this available; docdex simply wasn't using it. Python's
+  `sqlite3` starts a transaction for data changes but *not* for schema changes, which
+  is why the deletion survived the crash that followed it.
+- **An empty index is now reported, never answered.** `search` refuses with a named
+  error telling you to run `docdex sync`, instead of returning "no matches" for a
+  corpus it cannot search. `docdex doctor` gained a `lexical index` check that
+  reports how many chunks are searchable, and fails when text is stored but the index
+  holds no terms — the exact state that went unnoticed. It also fails when only one
+  of the two term spaces is empty, which degrades ranking silently rather than
+  visibly.
+
+### From adversarial review of this fix
+
+Two external review passes ran on the change itself — one on the code, one on the
+tests — and found real problems in both. Full record in `docdex-qa/v0.5.4/`.
+
+- **A missing version record no longer hides a stale table.** If the database could
+  not say which schema it was, nothing was compared, so the upgrade was skipped and
+  the crash simply waited for the next edited document. Whether a rebuild is needed is
+  now decided from the actual columns, checked against the definition that creates
+  them so the check cannot drift.
+- **"Could not check" is no longer reported as "checked, fine".** When the health of
+  the index could not be established, it was being treated as healthy — the release's
+  own bug one level up. `search` and `doctor` now say they could not verify it.
+- **A partly-built index is caught, not just an empty one.** The health probe counts
+  how many chunks are actually indexed and compares that to how many are stored, so an
+  index covering a fraction of your documents fails instead of quietly answering for
+  the part it has.
+- **And a false alarm was caught before it shipped.** An earlier version of that probe
+  asked "does the index contain any words at all", which would have declared a
+  perfectly healthy index broken for a document containing only punctuation. Counting
+  indexed chunks instead is right in both directions.
+
+The release gate that checks all of this was audited too, and eleven ways it could
+have certified a release it had not really verified were closed — including a default
+comparison against a release two versions old, a pass on a dirty working tree that
+named a commit it had not tested, and trusting the benchmark's own claim that its
+output was byte-identical instead of checking.
+
+### Why it went unnoticed for a day
+
+`SELECT COUNT(*) FROM chunks_fts` returns a full row count even when the index is
+completely empty — for an external-content FTS5 table that count is read from the
+*content* table, not the index. Every obvious health check therefore looked perfect.
+The new check uses `fts5vocab`, which is FTS5's own view of the inverted index, so it
+reports what was really indexed rather than what should have been.
+
+### Note for existing installs
+
+Nothing to do beyond one `docdex sync`, which now completes. If you ran a sync
+between v0.5.2 and this release, your keyword index was emptied and that sync will
+rebuild it; your documents and their extracted text were never touched.
 
 ## [0.5.3] — 2026-07-30 — "Out of Spotlight"
 

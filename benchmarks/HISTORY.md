@@ -18,6 +18,7 @@ All rows are produced by **today's** harness — `sweep` overlays the current `b
 | `v0.5.1` | 12/12 · 12/12 · 728 | 4/12 · 5/12 · 363 | 4/12 | 28,312 |
 | `v0.5.2` | 12/12 · 12/12 · 729 | 4/12 · 5/12 · 363 | 4/12 | 28,312 |
 | `v0.5.3` | 12/12 · 12/12 · 729 | 4/12 · 5/12 · 363 | 4/12 | 28,312 |
+| `v0.5.4` | 12/12 · 12/12 · 729 | 4/12 · 5/12 · 363 | 4/12 | 28,312 |
 
 ## Suite B — multi-field form filling (12 fields, 1 absent)
 
@@ -31,6 +32,7 @@ All rows are produced by **today's** harness — `sweep` overlays the current `b
 | `v0.5.1` | 9/11 | 1,595 | 1 |
 | `v0.5.2` | 10/11 | 1,433 | 1 |
 | `v0.5.3` | 10/11 | 1,433 | 1 |
+| `v0.5.4` | 10/11 | 1,433 | 1 |
 
 ## Regressions between recorded releases
 

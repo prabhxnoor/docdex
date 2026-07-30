@@ -6,7 +6,17 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-07-30 (SHIPPED **v0.5.3 "Out of Spotlight"** — docdex's
+> _Last updated: 2026-07-30 (SHIPPED **v0.5.4 "The upgrade that broke the index"** —
+> a regression this project shipped, reported by the user: after v0.5.2 `docdex sync`
+> crashed on any index that already existed, and keyword search then returned nothing
+> across a 10,498-file corpus without saying so. The new column was never added to an
+> existing table, and the drop of the two FTS mirrors was committed before the crash
+> that followed it, so each sync destroyed a working index and left an empty one. Now:
+> a version change recreates the derived tables, the whole upgrade is one transaction,
+> and an empty index is reported by `search` and by a new `doctor` check instead of
+> being answered as "no matches". 284 tests. No document text was ever at risk.)_
+>
+> _Previously: 2026-07-30 (SHIPPED **v0.5.3 "Out of Spotlight"** — docdex's
 > plain-text copies of your documents no longer appear in Spotlight/Finder search.
 > User-reported; a privacy bug, not clutter. The state dir is now named
 > `_state.noindex`, the only mechanism measured to work — the widely-cited
@@ -325,15 +335,17 @@ are what remain, and they are **v0.5.2 ← next**.
   label present anywhere always decides.
 - ⬜ **Apposition: a value written BEFORE its label** — "Helios Components Pvt Ltd
   **as the Vendor**", "Acme (the **Supplier**)". The standard way contracts name a
-  party, and the benchmark's last miss (`Legal name`). **→ v0.5.4.** Needs a required
+  party, and the benchmark's last miss (`Legal name`). **→ v0.5.5** (v0.5.4 went to
+  repairing the schema-upgrade regression). Needs a required
   connective, a bounded lookback and a clause-boundary stop: unbounded backwards
   reading is the DDX-029 cross-field leakage class ("Payment terms are net-45.
   Vendor: Acme" would hand `net-45` to `Legal name`), so it gets its own change and
   its own review rather than riding along with something else.
 - ⬜ **Optional embeddings / RRF** via `DOCDEX_EMBED_CMD` (local-only) for pure
   paraphrase and folder discovery — exact IDs, amounts, dates, and missing-evidence
-  honesty stay lexical/structured. **→ v0.5.5** (was v0.5.1, which the precision fix took,
-  then pushed twice more by the Spotlight fix and apposition); off by default, needs a local embedder. Note v0.5.1 already built the
+  honesty stay lexical/structured. **→ v0.5.6** (was v0.5.1, which the precision fix took,
+  then pushed by the Spotlight fix, the schema-upgrade repair, and apposition); off by
+  default, needs a local embedder. Note v0.5.1 already built the
   two-ranking fusion plumbing this will extend — a vector ranking becomes a third
   input to the same merge.
 - ✅ **Conflict v2** — recency/authority weighting on top of Phase 3's grouping,
@@ -665,3 +677,27 @@ Honest list of what the suite still cannot see, so it is not mistaken for covera
   measured by hand on the real corpus.
 - ⬜ **Unicode breadth** — NFD/NFC (tracked as a failing `xfail`), plus CJK
   segmentation, RTL and combining marks are untested.
+
+**Raised by the v0.5.4 review and deliberately deferred** (recorded so they are debt,
+not oversights — each was reproduced or reasoned about, none is fixed):
+
+- ⬜ **FTS index corruption, as distinct from an empty one.** v0.5.4 detects an index
+  that is empty or incompletely built. It cannot detect a mirror whose postings point
+  at the *wrong* content rows, which would return a confident hit citing the wrong
+  document — worse than any failure v0.5.4 fixes. FTS5 offers
+  `INSERT INTO chunks_fts(chunks_fts) VALUES('integrity-check')`; the open question is
+  cost on a 92k-chunk index, so it likely belongs behind a `docdex doctor --deep` flag
+  rather than in the default run.
+- ⬜ **Gate 3 can be satisfied by a test that discriminates nothing.** A single
+  `assert __version__ == "0.5.4"` fails on the base tree and would satisfy the gate on
+  its own. The real fix is a declared manifest of the node IDs that must fail on base
+  for each claimed behaviour, checked against the archive's adjudication. Until then
+  gate 3 is a floor, not a proof, and the adjudication carries the argument.
+- ⬜ **A changed citation is a note, not a failure.** Gate 2 fails on a lost field but
+  only warns when a field's *cited source* changes, so a correct value attributed to
+  the wrong document can pass. Making it a failure needs an adjudicated allowlist for
+  intentional improvements, since a better source legitimately changes the citation.
+- ⬜ **Determinism is tested on a corpus too small to tie.** Gate 4 compares packet
+  bytes across hash seeds, but the fixture never produces the large blocks of
+  equal-scoring chunks where set-iteration order would actually show. Needs a stress
+  corpus of hundreds of tied chunks across several queries.

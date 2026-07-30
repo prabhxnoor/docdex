@@ -329,7 +329,14 @@ def main():
     (HERE / "results_task.json").write_text(json.dumps(
         {"files": n_files, "findable": nf, "absent": len(ABSENT),
          "full_tokens": full["tokens"],
-         "results": {k: {kk: vv for kk, vv in v.items() if kk != "packet"}
+         # The canonical packet travels with its digest so a caller can recompute the
+         # hash instead of trusting the number this script reports. Found by
+         # adversarial review of the QA gate: a harness that returned a constant
+         # `packet_sha256` while the bytes varied would have certified
+         # non-determinism, because the gate never saw the packet.
+         "results": {k: ({kk: vv for kk, vv in v.items() if kk != "packet"}
+                         | ({"packet_canonical": canonical_packet(v["packet"])}
+                            if "packet" in v else {}))
                      for k, v in results.items()}}, indent=2), encoding="utf-8")
     print("\n".join(lines[:16]))
     print(f"\nfull report: {HERE / 'RESULTS_TASK.md'}")

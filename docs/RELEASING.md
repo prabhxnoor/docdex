@@ -44,6 +44,33 @@ If a real bug is found but deliberately not fixed in this release, land it as
 it fails loudly the moment it starts passing, which is the signal to delete the
 marker — that is how v0.5.1's tracked gap became v0.5.2's fix.
 
+### If the release touches stored state, test the *upgrade*, not just the result
+
+**Standard: any change to something docdex has already written to disk — a database
+column, a schema version, a file name, a cache layout — needs a test that starts from
+the previous release's on-disk format and upgrades it.** A fresh build is not that
+test, and it is what every existing test does by default, because every test starts
+from an empty directory.
+
+This rule exists because v0.5.2 shipped with a full green suite and broke every index
+already on disk. It added a column to `chunks`, and `CREATE TABLE IF NOT EXISTS` does
+nothing to a table that exists — so on a real index the column was never added and
+`sync` died inserting into it. Nothing caught it: 263 tests, all starting from nothing.
+
+Two properties are worth stating separately, because the second is what turned a crash
+into data loss:
+
+- **The upgrade succeeds** — old format in, working index out, and the data is still
+  there afterwards.
+- **A failed upgrade changes nothing.** Force the upgrade to fail partway and assert
+  the previous state still works. v0.5.2's upgrade deleted the search index outside a
+  transaction, so the deletion was committed and the crash that followed left an empty
+  index — every query then returned "no matches" for the entire corpus.
+
+And whatever the release makes newly detectable, add the check to `docdex doctor` in
+the same commit. A guarantee nobody can inspect is a guarantee nobody can trust —
+v0.5.4's index was empty for a day while every check reported PASS.
+
 ## 2. Fix it, and check what the fix cost
 
 Measure the cost of the fix on something real, not only the synthetic corpus.
