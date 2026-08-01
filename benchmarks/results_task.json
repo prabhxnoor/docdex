@@ -45,55 +45,67 @@
       "fields": {
         "Legal name": {
           "section": "answers",
-          "source": ""
+          "source": "Contracts/scan_8841 copy.docx \u00b73",
+          "approx": true
         },
         "GST number": {
           "section": "weak",
-          "source": "Archive/Final_v3_USE.xlsx \u00b71"
+          "source": "Archive/Final_v3_USE.xlsx \u00b71",
+          "approx": false
         },
         "PAN": {
           "section": "weak",
-          "source": "Archive/Final_v3_USE.xlsx \u00b72"
+          "source": "Archive/Final_v3_USE.xlsx \u00b72",
+          "approx": false
         },
         "Registered address": {
           "section": "weak",
-          "source": "Archive/Final_v3_USE.xlsx \u00b74"
+          "source": "Archive/Final_v3_USE.xlsx \u00b74",
+          "approx": false
         },
         "Liability cap": {
           "section": "answers",
-          "source": "Misc/document1 (4).pdf \u00b73"
+          "source": "Misc/document1 (4).pdf \u00b73",
+          "approx": false
         },
         "Payment terms": {
           "section": "weak",
-          "source": "Contracts/scan_8841 copy.docx \u00b76"
+          "source": "Contracts/scan_8841 copy.docx \u00b76",
+          "approx": false
         },
         "Governing law": {
           "section": "weak",
-          "source": ""
+          "source": "Contracts/scan_8841 copy.docx \u00b79",
+          "approx": true
         },
         "Renewal term": {
           "section": "answers",
-          "source": "Misc/document1 (4).pdf \u00b77"
+          "source": "Misc/document1 (4).pdf \u00b77",
+          "approx": false
         },
         "Primary contact email": {
           "section": "weak",
-          "source": "Operations/notes_final.md \u00b73"
+          "source": "Operations/notes_final.md \u00b73",
+          "approx": false
         },
         "Annual contract value": {
           "section": "weak",
-          "source": "Finance/untitled (5).xlsx \u00b71"
+          "source": "Finance/untitled (5).xlsx \u00b71",
+          "approx": false
         },
         "Effective date": {
           "section": "answers",
-          "source": "Contracts/scan_8841 copy.docx \u00b713"
+          "source": "Contracts/scan_8841 copy.docx \u00b713",
+          "approx": false
         },
         "Bank IFSC": {
           "section": "missing",
-          "source": ""
+          "source": "",
+          "approx": false
         }
       },
-      "packet_sha256": "0fed6b7cf9a7509a7eced322a8c875f5999b4d16912a45ec963389245baffd84",
-      "packet_canonical": "# context packet\nTask: fill the vendor onboarding form\nCoverage: 12 fields \u00b7 4 found \u00b7 7 weak \u00b7 1 missing\nBudget: 3000 requested \u00b7 ~1424 used (\u2248 chars/4) \u00b7 1576 free\nIndex: indexed <normalized>\n\n## Answers\n- Legal name: Helios Components Pvt Ltd  [Contracts/scan_8841 copy.docx \u00b73]  ~approx\n- Liability cap: under this agreement is INR 6.5 crore.  [Misc/document1 (4).pdf \u00b73]\n- Renewal term: is 24 months unless terminated.  [Misc/document1 (4).pdf \u00b77]\n- Effective date: 1 April 2026.  [Contracts/scan_8841 copy.docx \u00b713]\n\n## Needs follow-up (weak)\n- GST number: matched, no clear value \u2014 29ABCDE1234F1Z5 Liability acceptance pursuant obligations confidentiality whereas jurisdiction whereas obligations agreement hereto milestone.  [Archive/Final_v3_USE.xlsx \u00b71]\n- PAN: matched, no clear value \u2014 ABCDE1234F Remedy acceptance term parties remedy notwithstanding whereas milestone party clause obligations milestone covenant.  [Archive/Final_v3_USE.xlsx \u00b72]\n- Registered address: matched, no clear value \u2014 Tower B, Bengaluru 560042 Covenant vendor warranties party annexure schedule notwithstanding confidentiality whereas term remedy delivery.  [Archive/Final_v3_USE.xlsx \u00b74]\n- Payment terms: matched, no clear value \u2014 are net-45 from the date of invoice.  [Contracts/scan_8841 copy.docx \u00b76]\n- Governing law: matched, no clear value \u2014 of Karnataka.  [Contracts/scan_8841 copy.docx \u00b79]  ~approx\n- Primary contact email: matched, no clear value \u2014 bility covenant vendor annexure services acceptance. Primary contact: ops@helios-components.example for escalations. Vendor milestone warranties schedule covena  [Operations/notes_final.md \u00b73]\n- Annual contract value: matched, no clear value \u2014 INR 1.8 crore Confidentiality whereas delivery term delivery parties provision vendor acceptance herein schedule delivery term.  [Finance/untitled (5).xlsx \u00b71]\n\n## Missing\n- Bank IFSC: not found (tried: bank, ifsc)\n- no index hits for: bank, email, ifsc\n\n## Evidence\n> `~approx` = matched by word stem or a declared synonym, not the literal term \u2014 confirm before relying on it.\n[E1] Finance/untitled (5).xlsx \u00b71  (2026-07-30)  (score 5.7449)  ~approx\n  \"ntiality annexure thereof acceptance delivery term covenant obligations termination thereof. Acceptance annexure hereto confidentiality party services remedy thereof representations remedy annexure. Acceptance annexure hereto confidentiality party services remedy thereof representations remedy annexure. Obligations remedy provision warranties agreement servi\"\n[E2] Contracts/scan_8841 copy.docx \u00b713  (2026-07-30)  (score 17.8612)  ~approx\n  \"eas covenant confidentiality parties herein delivery agreement thereof acceptance obligations breach arbitration vendor term whereas warranties liability. Clause annexure warranties representations acceptance representations whereas schedule term annexure delivery indemnify parties. Covenant herein party jurisdiction agreement confidentiality termination con\"\n[E3] Operations/notes_final.md \u00b73  (2026-07-30)  (score 6.5505)  ~approx\n  \"lity jurisdiction breach party liability delivery acceptance hereto. Termination notwithstanding confidentiality notwithstanding confidentiality obligations pursuant warranties jurisdiction confidentiality breach agreement arbitration confidentiality milestone representations pursuant. Delivery delivery milestone acceptance warranties acceptance breach deliv\"\n[E4] Archive/Final_v3_USE.xlsx \u00b74  (2026-07-30)  (score 3.2861)  ~approx\n  \"ne obligations term schedule breach obligations. Breach whereas termination jurisdiction representations indemnify remedy breach parties confidentiality warranties clause milestone obligations term schedule breach obligations. Acceptance representations provision services breach confidentiality representations delivery whereas party whereas milestone. Accept\"\n[E5] Contracts/scan_8841 copy.docx \u00b76  (2026-07-30)  (score 3.1913)\n  \"arbitration whereas covenant whereas agreement liability herein obligations term termination termination annexure warranties party. Warranties acceptance term parties pursuant liability clause acceptance termination liability milestone notwithstanding confidentiality arbitration services. Notwithstanding provision party agreement annexure party annexure con\"\n[E6] Archive/Final_v3_USE.xlsx \u00b71  (2026-07-30)  (score 6.4445)  ~approx\n  \"on term obligations. Agreement remedy notwithstanding jurisdiction schedule acceptance provision jurisdiction obligations delivery obligations parties indemnify. Agreement remedy notwithstanding jurisdiction schedule acceptance provision jurisdiction obligations delivery obligations parties indemnify. Services herein whereas parties covenant services deliver\"\n[E7] Misc/document1 (4).pdf \u00b77  (2026-07-30)  (score 1.9071)  ~approx\n  \"parties services. Agreement parties hereto herein notwithstanding termination liability arbitration notwithstanding schedule warranties milestone jurisdiction services party party. Remedy herein termination parties annexure notwithstanding pursuant provision vendor termination indemnify hereto party covenant obligations. Confidentiality liability vendor here\"\n[E8] Misc/document1 (4).pdf \u00b73  (2026-07-30)  (score 6.1842)  ~approx\n  \"obligations whereas pursuant. Party clause arbitration obligations parties parties delivery warranties term obligations whereas pursuant term jurisdiction. Indemnify termination jurisdiction jurisdiction remedy clause term indemnify breach hereto parties. Jurisdiction liability arbitration hereto provision pursuant termination provision remedy warranties. He\"\n\n## Suggested next call\n- docdex context \"Bank IFSC\" --budget 1500\n"
+      "packet_sha256": "ca8293cba23af595e7286b4f1164e92dde5cf5e3357b5d384badf38b82a3394b",
+      "packet_canonical": "# context packet\nTask: fill the vendor onboarding form\nCoverage: 12 fields \u00b7 4 found \u00b7 7 weak \u00b7 1 missing\nBudget: 3000 requested \u00b7 ~1424 used (\u2248 chars/4) \u00b7 1576 free\nIndex: indexed <normalized>\n\n## Answers\n- Legal name: Helios Components Pvt Ltd  [Contracts/scan_8841 copy.docx \u00b73]  ~approx\n- Liability cap: under this agreement is INR 6.5 crore.  [Misc/document1 (4).pdf \u00b73]\n- Renewal term: is 24 months unless terminated.  [Misc/document1 (4).pdf \u00b77]\n- Effective date: 1 April 2026.  [Contracts/scan_8841 copy.docx \u00b713]\n\n## Needs follow-up (weak)\n- GST number: matched, no clear value \u2014 29ABCDE1234F1Z5 Liability acceptance pursuant obligations confidentiality whereas jurisdiction whereas obligations agreement hereto milestone.  [Archive/Final_v3_USE.xlsx \u00b71]\n- PAN: matched, no clear value \u2014 ABCDE1234F Remedy acceptance term parties remedy notwithstanding whereas milestone party clause obligations milestone covenant.  [Archive/Final_v3_USE.xlsx \u00b72]\n- Registered address: matched, no clear value \u2014 Tower B, Bengaluru 560042 Covenant vendor warranties party annexure schedule notwithstanding confidentiality whereas term remedy delivery.  [Archive/Final_v3_USE.xlsx \u00b74]\n- Payment terms: matched, no clear value \u2014 are net-45 from the date of invoice.  [Contracts/scan_8841 copy.docx \u00b76]\n- Governing law: matched, no clear value \u2014 of Karnataka.  [Contracts/scan_8841 copy.docx \u00b79]  ~approx\n- Primary contact email: matched, no clear value \u2014 bility covenant vendor annexure services acceptance. Primary contact: ops@helios-components.example for escalations. Vendor milestone warranties schedule covena  [Operations/notes_final.md \u00b73]\n- Annual contract value: matched, no clear value \u2014 INR 1.8 crore Confidentiality whereas delivery term delivery parties provision vendor acceptance herein schedule delivery term.  [Finance/untitled (5).xlsx \u00b71]\n\n## Missing\n- Bank IFSC: not found (tried: bank, ifsc)\n- no index hits for: bank, email, ifsc\n\n## Evidence\n> `~approx` = matched by word stem or a declared synonym, not the literal term \u2014 confirm before relying on it.\n[E1] Finance/untitled (5).xlsx \u00b71  (2026-08-01)  (score 5.7449)  ~approx\n  \"ntiality annexure thereof acceptance delivery term covenant obligations termination thereof. Acceptance annexure hereto confidentiality party services remedy thereof representations remedy annexure. Acceptance annexure hereto confidentiality party services remedy thereof representations remedy annexure. Obligations remedy provision warranties agreement servi\"\n[E2] Contracts/scan_8841 copy.docx \u00b713  (2026-08-01)  (score 17.8612)  ~approx\n  \"eas covenant confidentiality parties herein delivery agreement thereof acceptance obligations breach arbitration vendor term whereas warranties liability. Clause annexure warranties representations acceptance representations whereas schedule term annexure delivery indemnify parties. Covenant herein party jurisdiction agreement confidentiality termination con\"\n[E3] Operations/notes_final.md \u00b73  (2026-08-01)  (score 6.5505)  ~approx\n  \"lity jurisdiction breach party liability delivery acceptance hereto. Termination notwithstanding confidentiality notwithstanding confidentiality obligations pursuant warranties jurisdiction confidentiality breach agreement arbitration confidentiality milestone representations pursuant. Delivery delivery milestone acceptance warranties acceptance breach deliv\"\n[E4] Archive/Final_v3_USE.xlsx \u00b74  (2026-08-01)  (score 3.2861)  ~approx\n  \"ne obligations term schedule breach obligations. Breach whereas termination jurisdiction representations indemnify remedy breach parties confidentiality warranties clause milestone obligations term schedule breach obligations. Acceptance representations provision services breach confidentiality representations delivery whereas party whereas milestone. Accept\"\n[E5] Contracts/scan_8841 copy.docx \u00b76  (2026-08-01)  (score 3.1913)\n  \"arbitration whereas covenant whereas agreement liability herein obligations term termination termination annexure warranties party. Warranties acceptance term parties pursuant liability clause acceptance termination liability milestone notwithstanding confidentiality arbitration services. Notwithstanding provision party agreement annexure party annexure con\"\n[E6] Archive/Final_v3_USE.xlsx \u00b71  (2026-08-01)  (score 6.4445)  ~approx\n  \"on term obligations. Agreement remedy notwithstanding jurisdiction schedule acceptance provision jurisdiction obligations delivery obligations parties indemnify. Agreement remedy notwithstanding jurisdiction schedule acceptance provision jurisdiction obligations delivery obligations parties indemnify. Services herein whereas parties covenant services deliver\"\n[E7] Misc/document1 (4).pdf \u00b77  (2026-08-01)  (score 1.9071)  ~approx\n  \"parties services. Agreement parties hereto herein notwithstanding termination liability arbitration notwithstanding schedule warranties milestone jurisdiction services party party. Remedy herein termination parties annexure notwithstanding pursuant provision vendor termination indemnify hereto party covenant obligations. Confidentiality liability vendor here\"\n[E8] Misc/document1 (4).pdf \u00b73  (2026-08-01)  (score 6.1842)  ~approx\n  \"obligations whereas pursuant. Party clause arbitration obligations parties parties delivery warranties term obligations whereas pursuant term jurisdiction. Indemnify termination jurisdiction jurisdiction remedy clause term indemnify breach hereto parties. Jurisdiction liability arbitration hereto provision pursuant termination provision remedy warranties. He\"\n\n## Suggested next call\n- docdex context \"Bank IFSC\" --budget 1500\n"
     }
   }
 }

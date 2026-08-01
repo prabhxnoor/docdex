@@ -266,8 +266,11 @@ def _history_has_record(version: str) -> bool:
 
 # Files that grade the release. Gate 2 imports these from HEAD and overlays them onto
 # the base tree, so they must not change in the same release they are grading.
+# Everything that decides what a benchmark REPORTS. `bench_all.py` belongs here too —
+# it owns which suite-A metrics are compared and in which direction — and was missing,
+# so a change to the metric list would have gone unnoticed by the oracle check below.
 HARNESS_FILES = ("benchmarks/task_benchmark.py", "benchmarks/run_benchmark.py",
-                 "benchmarks/corpus_gen.py")
+                 "benchmarks/corpus_gen.py", "benchmarks/bench_all.py")
 
 
 def _claimed_fixes(version: str):
@@ -292,10 +295,77 @@ def _claimed_fixes(version: str):
     return rows
 
 
-def _harness_unchanged(base: str) -> bool:
-    changed = run(["git", "diff", "--name-only", base, "--"] + list(HARNESS_FILES),
-                  REPO).stdout.split()
-    return not changed
+def _harness_changes(base: str) -> list:
+    return run(["git", "diff", "--name-only", base, "--"] + list(HARNESS_FILES),
+               REPO).stdout.split()
+
+
+def _oracle_got_looser(own: dict, new: dict, base: str, bench_all) -> list:
+    """Ways a harness change makes the PREVIOUS release look BETTER than it was.
+
+    Gate 2 overlays today's harness onto the base worktree, so a harness that merely
+    *changed* cannot skew the comparison — both sides are graded by the same oracle. The
+    risk that survives is an oracle that got weaker, because then both sides improve
+    together and an absolute regression hides inside a flat diff.
+
+    So the property is measurable rather than prohibited: run the base tree under its
+    own harness and under today's, and require today's not to report it as better. A
+    harness that finds fewer fields, calls fewer absences honest, or counts more tokens
+    is stricter, and stricter is always allowed.
+
+    This replaces a flat ban on touching the harness, which had the effect that a bug in
+    the oracle could never be fixed — v0.5.7 found one (no source recorded for any
+    `~approx` answer, so gate 2's per-field attribution check was blind for most of the
+    interesting fields) and had to leave it in place for a release.
+    """
+    bad = []
+    ob, nb = own.get("suite_b", {}), new.get("suite_b", {})
+    if "error" in ob or "error" in nb:
+        return [f"the base tree could not be measured under both harnesses "
+                f"(own={ob.get('error', 'ok')} new={nb.get('error', 'ok')}), so the "
+                f"harness change is unverified"]
+    # Field IDENTITIES, not counts. Found by adversarial review: a harness that stops
+    # checking `Legal name` and adds an easier field keeps `covered_n` unchanged, and a
+    # count comparison calls that neutral while the protection for a hard field is gone.
+    gained = sorted(set(nb.get("covered", [])) - set(ob.get("covered", [])))
+    if gained:
+        bad.append(f"suite B credits {base} with fields its own harness did not find: "
+                   f"{gained}")
+    honest_gained = sorted(set(nb.get("honest_absent", []))
+                           - set(ob.get("honest_absent", [])))
+    if honest_gained:
+        bad.append(f"suite B calls {honest_gained} honestly absent on {base} where its "
+                   f"own harness did not")
+    if (ob.get("tokens") or 0) and nb.get("tokens", 0) > ob["tokens"]:
+        bad.append(f"suite B counts MORE tokens for {base} under the new harness "
+                   f"({ob['tokens']} -> {nb['tokens']}), which loosens the ceiling "
+                   f"HEAD is measured against")
+    oa, na = own.get("suite_a", {}), new.get("suite_a", {})
+    if "summary" in oa and "summary" in na:
+        # The UNION of both harnesses' methods. Iterating only today's list would let a
+        # release delete a hard retrieval method from `A_METHODS` and never look at it
+        # again. Found by adversarial review.
+        for m in sorted(set(oa["summary"]) | set(na["summary"])):
+            if m in oa["summary"] and m not in na["summary"]:
+                bad.append(f"suite A method {bench_all.A_LABEL.get(m, m)!r} is no "
+                           f"longer measured at all under the new harness")
+                continue
+            for k in sorted(set(oa["summary"].get(m, {}))
+                            | set(na["summary"].get(m, {}))):
+                if k not in bench_all.A_HIGHER_BETTER:
+                    continue
+                p = oa["summary"].get(m, {}).get(k)
+                c = na["summary"].get(m, {}).get(k)
+                if p is not None and c is None:
+                    bad.append(f"suite A {bench_all.A_LABEL.get(m, m)} {k} is no "
+                               f"longer measured (was {p} on {base})")
+                elif p is not None and c is not None and c > p:
+                    bad.append(f"suite A {bench_all.A_LABEL.get(m, m)} {k} reads "
+                               f"{p} -> {c} for {base} under the new harness")
+    else:
+        bad.append(f"suite A produced no comparable summary for {base} under both "
+                   f"harnesses, so the harness change is unverified")
+    return bad
 
 
 def _adjudication_ok(path: Path, version: str) -> bool:
@@ -417,13 +487,18 @@ def main() -> int:
          _adjudication_ok(QA_ARCHIVE / f"v{version}" / "ADJUDICATION.md", version)),
         (f"benchmarks/HISTORY.json holds a valid record for v{version}",
          _history_has_record(version)),
-        # The benchmark harness is the oracle for BOTH sides of gate 2: `sweep`
-        # overlays today's harness onto the base tree, so a release that edits the
-        # harness moves the exam and the answer together and both sides look perfect.
-        # Changing it is sometimes right — it just cannot pass unnoticed.
-        ("benchmark harness unchanged since the base (it grades both sides)",
-         _harness_unchanged(args.base)),
     ]
+    # The benchmark harness is the oracle for BOTH sides of gate 2, which overlays
+    # today's harness onto the base tree. Editing it is therefore allowed but not free:
+    # gate 2 measures the base tree under both harnesses and refuses a change that
+    # reports the previous release as BETTER (see `_oracle_got_looser`). This was a flat
+    # ban, which meant a bug in the oracle could never be fixed.
+    harness_changed = _harness_changes(args.base)
+    if harness_changed:
+        notes.append(f"benchmark harness changed since {args.base} "
+                     f"({', '.join(harness_changed)}) — gate 2 verifies it did not "
+                     f"loosen the oracle")
+        print(f"      NOTE the harness changed: {', '.join(harness_changed)}")
     for label, ok in checks:
         print(f"      {'OK  ' if ok else 'MISS'} {label}")
         if not ok:
@@ -460,6 +535,7 @@ def main() -> int:
     # tree. Found by adversarial review.
     rep_head_total = rep["total"]
     base_total = None
+    base_own_total = None
 
     # ------------------------------------------------ prepare the base worktree
     run(["git", "worktree", "add", "-q", "--detach", str(base_tree), args.base], REPO)
@@ -480,6 +556,17 @@ def main() -> int:
     # The BENCHMARK HARNESS must be identical on both sides, or the oracle itself
     # differs and the comparison is meaningless (a HEAD that loosened `covered()`
     # would look like an improvement). Only src/ may differ.
+    #
+    # When this release edits the harness, measure the base tree under its OWN harness
+    # FIRST — that is the only moment the old oracle still exists — so the overlay can
+    # be checked for having loosened it rather than simply forbidden.
+    sys.path.insert(0, str(REPO / "benchmarks"))
+    import bench_all
+    own_oracle = None
+    if harness_changed:
+        print(f"      measuring {args.base} under its OWN harness first "
+              f"(the release edits the oracle)")
+        own_oracle = bench_all.measure(base_tree, args.base, "", "base-own-harness")
     shutil.rmtree(base_tree / "benchmarks", ignore_errors=True)
     shutil.copytree(REPO / "benchmarks", base_tree / "benchmarks")
 
@@ -492,14 +579,26 @@ def main() -> int:
     # Suite A (single-fact retrieval) is compared per method here too. It was
     # historically only recorded at v0.1.1, which is how a five-release blind spot
     # opened up; `bench_all.py` owns the measurement so both tools agree.
-    sys.path.insert(0, str(REPO / "benchmarks"))
-    import bench_all
     head_rec = bench_all.measure(REPO, "HEAD", head_sha, "head")
     base_rec = bench_all.measure(base_tree, args.base, "", "base")
+    if own_oracle is not None:
+        looser = _oracle_got_looser(own_oracle, base_rec, args.base, bench_all)
+        for x in looser:
+            print(f"      ORACLE LOOSENED {x}")
+        if looser:
+            failures.append(f"the harness change reports {args.base} as better than its "
+                            f"own harness did, so this release is graded more kindly "
+                            f"than the last: {looser}")
+        else:
+            print(f"      harness change is neutral or stricter on {args.base}")
     ha, ba = head_rec["suite_a"], base_rec["suite_a"]
     if "summary" in ha and "summary" in ba:
         a_lost = []
-        for m in bench_all.A_METHODS:
+        # The union of both sides' methods, not today's list: a release that deletes a
+        # method from `A_METHODS` would otherwise remove it from its own exam. Found by
+        # adversarial review.
+        for m in sorted(set(bench_all.A_METHODS) | set(ba.get("summary", {}))
+                        | set(ha.get("summary", {}))):
             # A method present on base but gone from HEAD means a whole retrieval
             # path disappeared. Skipping it silently — which is what comparing only
             # the intersection did — is how that ships unnoticed. Found by review.
@@ -550,6 +649,22 @@ def main() -> int:
                 failures.append(
                     f"{f}: demoted from 'answers' to '{h['section']}'")
                 print(f"      REGRESSED {f}: answers -> {h['section']}")
+            elif h.get("approx") and not b.get("approx"):
+                # Confidence is part of the answer. A field that used to be read from a
+                # literal label and is now read through a word ending or a declared
+                # synonym is a quieter regression than a lost value and just as real —
+                # and it was invisible until the citation parser stopped losing the tag.
+                failures.append(f"{f}: answer became approximate (~approx) — it was "
+                                f"read from a literal label on {args.base}")
+                print(f"      REGRESSED {f}: exact -> ~approx")
+            elif b["source"] and not h["source"]:
+                # An answer with no citation is unverifiable, and the comparison used to
+                # skip whenever either side was empty — so removing a citation passed
+                # silently. Found by adversarial review; only visible at all because
+                # this release stopped the harness losing `~approx` sources.
+                failures.append(f"{f}: answered with NO cited source (was "
+                                f"{b['source']!r} on {args.base})")
+                print(f"      REGRESSED {f}: citation disappeared")
             elif b["source"] and h["source"] and b["source"] != h["source"]:
                 notes.append(f"{f}: cited source changed "
                              f"{b['source']!r} -> {h['source']!r} (verify it's right)")
@@ -596,10 +711,15 @@ def main() -> int:
         # Found by adversarial review: this used to be a note, so a release that
         # changed behaviour and added no test at all sailed through the gate whose
         # entire purpose is to require one. A waiver must be stated out loud.
-        src_changed = sorted(
-            p for p in run(["git", "diff", "--name-only", f"{args.base}..HEAD"],
-                           REPO).stdout.split()
-            if p.startswith("src/") and p.endswith(".py"))
+        # `base..HEAD` sees only what is COMMITTED, and the gate supports running on a
+        # dirty tree, so an uncommitted product edit was invisible to the waiver check.
+        # Found by adversarial review. Compare against the working tree and include
+        # untracked files, which is what actually gets measured.
+        src_changed = sorted({
+            p for p in (run(["git", "diff", "--name-only", args.base], REPO).stdout
+                        + run(["git", "ls-files", "-o", "--exclude-standard", "src/"],
+                              REPO).stdout).split()
+            if p.startswith("src/") and p.endswith(".py")})
         if args.no_new_tests and src_changed:
             # Any non-empty string used to waive the only machine check that requires
             # release-specific tests — including for a release that rewrote retrieval.
@@ -621,6 +741,13 @@ def main() -> int:
             print("      MISS — no test changes, and no waiver given")
     else:
         print(f"      candidates: {', '.join(changed)}")
+        # The base suite measured with its OWN tests, BEFORE the overlay — the only
+        # moment they still exist. Found by adversarial review: a `conftest.py` hook
+        # that suppresses collection is copied onto the base tree along with everything
+        # else, so both sides collect the same tiny number and the size comparison that
+        # exists to catch exactly that agrees with itself.
+        base_own_tests = pytest_run(
+            base_tree, env={"DOCDEX_CACHE_DIR": str(work / "cache_baseown")})
         # Overlay the WHOLE tests/ tree so fixtures, conftest and data come too.
         shutil.rmtree(base_tree / "tests", ignore_errors=True)
         shutil.copytree(REPO / "tests", base_tree / "tests")
@@ -629,6 +756,7 @@ def main() -> int:
         base_all = pytest_run(base_tree,
                               env={"DOCDEX_CACHE_DIR": str(work / "cache_basefull")})
         base_total = base_all["total"]
+        base_own_total = base_own_tests["total"]
         rep = pytest_run(base_tree, changed,
                          env={"DOCDEX_CACHE_DIR": str(work / "cache_gate3")})
         for f in rep["assertion"]:
@@ -660,12 +788,30 @@ def main() -> int:
                 f"finding this release fixes and the test that proves it, so the gate "
                 f"can check EVERY claimed fix is covered — not just that one is.")
             print("      MISS — no finding-to-test map declared")
+        elif not [t for _f, t in mapping if t != "-"]:
+            # Every row waived is not a finding-to-test map, it is the absence of one.
+            # Found by adversarial review.
+            failures.append(
+                f"FIXED_BY.tsv names no test at all — every row is '-'. At least one "
+                f"claimed fix has to be proven by a test that fails on {args.base}.")
+            print("      MISS — every claimed fix is waived")
         else:
             caught = set(rep["assertion"])
-            unproven = [(f, t) for f, t in mapping
-                        if not any(a.endswith(t) or t in a for a in caught)]
+            # Match on the node's own NAME, not on a substring of the whole id: `t in a`
+            # let a short fragment like `test_a_` resolve against any number of unrelated
+            # nodes. Found by adversarial review.
+            def _proves(test: str) -> bool:
+                want = test.rsplit("::", 1)[-1]
+                for node in caught:
+                    name = node.rsplit("::", 1)[-1]
+                    if name == want or name.startswith(f"{want}["):
+                        return True
+                return False
+
+            unproven = [(f, t) for f, t in mapping if t != "-" and not _proves(t)]
             for finding, test in mapping:
-                mark = "OK  " if (finding, test) not in unproven else "MISS"
+                mark = ("WAIVED" if test == "-"
+                        else "OK  " if (finding, test) not in unproven else "MISS")
                 print(f"      {mark} {finding} <- {test}")
             if unproven:
                 failures.append(
@@ -722,6 +868,19 @@ def main() -> int:
         else:
             print(f"\n      suite size: {rep_head_total} cases on HEAD vs "
                   f"{base_total} on {args.base}")
+    # And the same comparison against the base's OWN tests, which is the version a
+    # suppression hook shipped by THIS release cannot have touched. Without it, the
+    # check above compares two runs of the same poisoned tree.
+    if base_own_total:
+        if rep_head_total < base_own_total * 0.9:
+            failures.append(
+                f"HEAD collected {rep_head_total} test cases against the {args.base} "
+                f"suite's own {base_own_total} — over a tenth of the suite disappeared. "
+                f"This comparison uses the base's UNMODIFIED tests, so a collection "
+                f"hook added by this release cannot flatten both sides of it.")
+        else:
+            print(f"      suite size vs {args.base}'s own tests: {base_own_total} "
+                  f"-> {rep_head_total} cases")
 
     # ------------------------------------------------- gate 5: honest verdict
     print("\n[5/6] what was verified")

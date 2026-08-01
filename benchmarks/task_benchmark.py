@@ -190,12 +190,24 @@ def method_search_loop(project, ground_truth, fields):
     return {"covered": covered("\n".join(texts), ground_truth), "tokens": tokens}
 
 
+# A packet line ends with its citation and then, when the label was matched by a word
+# ending or a declared synonym, the `~approx` tag. Anchoring the citation at
+# end-of-line therefore read NO source for any approximate answer — which is most of
+# the interesting ones, including the `Legal name` field this project spent v0.5.7 on —
+# and `qa_release.py`'s per-field source comparison silently skipped every one of them,
+# because it only compares when both sides have a source. Found while reviewing what
+# gate 2 can actually see.
+_CITED = re.compile(r"\[([^\]]+)\]\s*(?P<approx>~approx)?\s*$")
+
+
 def field_attribution(packet: str, fields) -> dict:
-    """Per field: which packet section carries it, and what source it cites.
+    """Per field: which packet section carries it, what source it cites, and whether
+    the answer is tagged approximate.
 
     A set of covered field *names* is too coarse to be a regression detector — it
-    cannot see a correct value credited to the wrong source, or an answer demoted
-    to 'weak'. `qa_release.py` diffs this per field instead.
+    cannot see a correct value credited to the wrong source, an answer demoted to
+    'weak', or a literal label match quietly becoming a synonym match.
+    `qa_release.py` diffs this per field instead.
     """
     section, out = None, {}
     for raw in packet.splitlines():
@@ -214,10 +226,12 @@ def field_attribution(packet: str, fields) -> dict:
             body = raw.strip()[2:]
             for f in fields:
                 if body.startswith(f) and f not in out:
-                    m = re.search(r"\[([^\]]+)\]\s*$", body)
+                    m = _CITED.search(body)
                     out[f] = {"section": section,
-                              "source": m.group(1) if m else ""}
-    return {f: out.get(f, {"section": "absent", "source": ""}) for f in fields}
+                              "source": m.group(1) if m else "",
+                              "approx": bool(m and m.group("approx"))}
+    return {f: out.get(f, {"section": "absent", "source": "", "approx": False})
+            for f in fields}
 
 
 # The packet header reports when the index was last built — a wall-clock stamp that

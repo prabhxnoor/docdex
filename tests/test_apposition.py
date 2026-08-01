@@ -35,6 +35,7 @@ general: `IBM as the Vendor` is deliberately missed.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -130,11 +131,20 @@ def fill(project, label: str, task: str = "fill the vendor form") -> str:
      "Helios Components pvt ltd"),
 ])
 def test_a_value_before_its_label_is_read(tmp_path, text, expected):
-    """The field must report the name, not "matched, no clear value"."""
+    """The field must report the name, not "matched, no clear value".
+
+    Asserted against `## Answers` and by EQUALITY, both on adversarial review's advice:
+    `value_of` accepts the weak tier, so demoting every apposition reading to "matched,
+    no clear value" would have left this whole set green; and `expected in got` accepts
+    `Helios Components Pvt Ltd as the Vendor`, which is not a company that exists.
+    """
     project = corpus(tmp_path, text)
-    got = value_of(fill(project, "Legal name"), "Legal name")
-    assert expected in got, (
-        f"apposition not read from {text.strip()!r} — field line said {got!r}")
+    packet = fill(project, "Legal name")
+    got = answered(packet, "Legal name")
+    stated = re.sub(r"\s*\[[^\]]*\](\s*~approx)?\s*$", "", got).strip()
+    assert stated == expected, (
+        f"apposition not read from {text.strip()!r} — answered {stated!r}, "
+        f"expected {expected!r}:\n{packet}")
 
 
 def test_an_apposition_value_is_tagged_approximate(tmp_path):
@@ -195,19 +205,18 @@ def test_a_labelled_value_still_wins_over_an_apposition(tmp_path):
     assert "Helios" not in got, got
 
 
-def test_a_forward_name_is_still_not_read_as_a_value(tmp_path):
-    """The deliberate boundary of this release, asserted so it stays deliberate.
+def test_a_forward_name_is_read_as_a_value(tmp_path):
+    """Closed in v0.5.8 (v0.5.7 asserted the opposite, deliberately).
 
-    "Legal name: Beta Holdings Ltd" is a labelled value docdex STILL cannot read,
-    because a company name matches no value pattern going forwards. Teaching the
-    forward direction to read names changes every field on every corpus — a far
-    larger blast radius than reading one backwards behind a required connective — so
-    it is its own release, not a rider on this one. Tracked in ROADMAP.
+    v0.5.7 read a name written BEFORE its label and could not read the plainest form
+    there is, so this case shipped as an explicit statement of that boundary: "if this
+    is now intended, delete this test and say so in the changelog". It is now intended.
+    A name is read forward only when a separator presents it as the field's value, and
+    only for a field known to want a party — see `tests/test_field_types.py`, which owns
+    the rules; this case stays here so the two directions are exercised side by side.
     """
     project = corpus(tmp_path, "Legal name: Beta Holdings Ltd.\n")
-    assert not answered(fill(project, "Legal name"), "Legal name"), (
-        "forward name reading arrived without its own review — if this is now "
-        "intended, delete this test and say so in the changelog")
+    assert "Beta Holdings Ltd" in answered(fill(project, "Legal name"), "Legal name")
 
 
 def test_apposition_does_not_cross_a_sentence_boundary(tmp_path):
@@ -441,15 +450,16 @@ def test_a_name_does_not_cross_a_sentence_end_without_a_space(tmp_path):
     assert "Zeta" not in got, f"two sentences were joined into one name: {got!r}"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "A name written with trailing abbreviation dots — 'Helios Components Pvt. Ltd.' — "
-    "is never seen whole, because clause segmentation splits on '. ' before apposition "
-    "runs, leaving 'Ltd.' alone in its own clause. Found while hardening this release. "
-    "Fixing it means teaching `_clauses` to keep abbreviations together, which every "
-    "value line, conflict key and field window also depends on — a change with its own "
-    "blast radius and its own review, not a rider on this one. Tracked in ROADMAP."))
 def test_an_abbreviation_dot_still_joins_a_name(tmp_path):
-    """Known gap: "Pvt. Ltd." is one company, and docdex reads it as two clauses."""
+    """Closed in v0.5.8 (a strict xfail from v0.5.7).
+
+    "Pvt. Ltd." is one company, and every release up to v0.5.7 read it as three
+    clauses: segmentation split on '. ' before anything read the text, so the backward
+    scan from `as` found only "Ltd.". The boundary is now abbreviation-aware —
+    `tests/test_clause_segmentation.py` owns that rule and the cases where a full stop
+    must still end a clause. This case stays here because it is what apposition needs
+    from the boundary.
+    """
     project = corpus(tmp_path, "Signed by Helios Components Pvt. Ltd. as the "
                                "Vendor.\n")
     got = value_of(fill(project, "Legal name"), "Legal name")

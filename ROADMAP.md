@@ -6,7 +6,37 @@
 > per-release design docs (e.g. [`docs/V0.2_PLAN.md`](docs/V0.2_PLAN.md)) are
 > frozen historical records; *this* file is the one that keeps moving.
 >
-> _Last updated: 2026-07-30 (SHIPPED **v0.5.7 "The name before the label"** — the form
+> _Last updated: 2026-08-01 (SHIPPED **v0.5.8 "The three gaps we wrote down"** —
+> v0.5.7 stated three gaps rather than closing them, and closing all three turned out
+> to be one question asked properly: **what is a field's value, and which field may
+> have it?** (1) `Legal name: Beta Holdings Ltd` — the plainest labelled value there
+> is — reported "matched, no clear value", because a value had to look like a number, an
+> amount, a date or an email. It is now read, but only when a separator presents it as
+> the field's value and only for a field known to want a party, and for such a field the
+> name beats a number in the same window. (2) A full stop inside a company name no longer
+> ends a clause, so `Helios Components Pvt. Ltd.` is finally seen whole — the largest
+> blast radius in the release, moving a boundary in 3.1% of real chunks, which is why it
+> was a strict xfail rather than a rider on v0.5.7. (3) Which fields may be answered with
+> a company is now a **type** question answered from an allow-list: `field_kind()` says
+> party / quantity / date / identifier / unknown, and the forty-word deny-list it
+> replaces had been letting a company into `Aggregate liability`, `Consideration
+> payable`, `Security deposit`, `Royalty` and `Indemnity`. An unfamiliar label now gets
+> nothing, and `aliases.json` is how a user says what their own label means. Two defects
+> the work itself surfaced: a value lost its unit (`Renewal term: 24 months  Vendor:
+> Acme` was answered `24`, because durations were not units and the search for the next
+> field's label read "months Vendor" as that label), and a cross-reference could be
+> presented as a legal name (the step that picks which chunk to read scanned for numbers,
+> and a company name has none — the third place answering "does this text carry a
+> value"). Also fixed the benchmark's own blindness — no source was recorded for any
+> `~approx` answer, so gate 2's attribution check saw 9 fields of 11 — and the gate rule
+> that had made that unfixable: a flat ban on touching the harness is replaced by
+> measuring the property it stood in for, that a harness change must not report the
+> PREVIOUS release as better. On the real 104,168-chunk corpus all 4 forward name
+> readings are correct, in contrast to v0.5.7's 3-of-4 wrong before its corporate-form
+> rule. Schema 6 → 7. Both benchmarks unchanged (11/11 at 1,424 tokens); 466 tests, up
+> from 427.)_
+>
+> _Previously: 2026-07-30 (SHIPPED **v0.5.7 "The name before the label"** — the form
 > benchmark reads **11/11 for the first time**, at fewer tokens than 10/11 cost.
 > Contracts name a company and then say what role it plays ("Helios Components Pvt Ltd
 > **as the Vendor**"), and every release until now read a field's value from the text
@@ -406,9 +436,9 @@ are what remain, and they are **v0.5.2 ← next**.
   its own review rather than riding along with something else.
 - ⬜ **Optional embeddings / RRF** via `DOCDEX_EMBED_CMD` (local-only) for pure
   paraphrase and folder discovery — exact IDs, amounts, dates, and missing-evidence
-  honesty stay lexical/structured. **→ v0.5.8 (NEXT)** (was v0.5.1, which the precision fix took,
+  honesty stay lexical/structured. **→ v0.5.9 (NEXT)** (was v0.5.1, which the precision fix took,
   then pushed by the Spotlight fix, the schema-upgrade repair, its follow-up, the
-  whole-product review, and apposition); off by
+  whole-product review, apposition, and closing apposition's three stated gaps); off by
   default, needs a local embedder. Note v0.5.1 already built the
   two-ranking fusion plumbing this will extend — a vector ranking becomes a third
   input to the same merge.
@@ -779,30 +809,57 @@ not oversights — each was reproduced or reasoned about, none is fixed):
   plausibility check on a forward window — a value region that reads as a full clause
   is probably not a field value.
 
-- ⬜ **A forward-written name is still not a value.** "Legal name: Beta Holdings Ltd" is
-  labelled and unreadable, because a company name matches no value pattern going
-  forwards — only the backward apposition path can read names. Teaching the forward
-  direction to read them changes found/weak for every field on every corpus (and would
-  answer "Payment terms: See Schedule B" with "Schedule B"), so it needs its own release
-  and its own review. Pinned by a test so it stays a decision.
-- ⬜ **Clause splitting cuts abbreviations.** "Helios Components Pvt. Ltd." is never
-  seen whole because `_clauses` splits on ". " first. Tracked as a strict xfail. Fixing
-  it touches every value line, conflict key and field window.
-- ⬜ **A field's expected TYPE is a word list.** Apposition refuses fields whose label
-  contains "cap", "amount", "date"… because a corporate entity cannot answer them. That
-  is a stand-in for M6's typed field registry, and it is a heuristic that will be wrong
-  for some label somebody writes.
-- ⬜ **The benchmark harness reports no source for any approximate answer.** Its
-  attribution parser anchors the citation at the end of the line, and `~approx` comes
-  after it — so gate 2's per-field source comparison is blind for every `~approx`
-  field, which is now most interesting ones. Found while checking v0.5.7's own
-  attribution. Deliberately NOT fixed inside v0.5.7: gate 0 fails a release that edits
-  the harness grading it, and that rule is worth more than this fix. **First item for
-  v0.5.8.**
+- ✅ **A forward-written name is now a value** — closed in v0.5.8. `Legal name: Beta
+  Holdings Ltd` is read, but only when a separator presents it as the field's value and
+  only for a field known to want a party, which is also what keeps "Payment terms: See
+  Schedule B" from answering "Schedule B" (a schedule reference is not a company). All 4
+  readings on the real corpus are correct.
+- ✅ **Clause splitting no longer cuts abbreviations** — closed in v0.5.8. `Pvt.`,
+  `Ltd.`, `Co.`, `Inc.` keep a clause going when a lowercase word or another such
+  abbreviation follows. Was a strict xfail; the change moved a boundary in 3.1% of real
+  chunks, which is why it needed its own release.
+- ✅ **A field's expected TYPE is a registry, not a word list** — closed in v0.5.8.
+  `field_kind()` answers party / quantity / date / identifier / unknown, from the
+  label's words or from a declared synonym, and only a `party` field may be answered
+  with a company. The deny-list it replaces allowed a company into `Aggregate
+  liability`, `Consideration payable`, `Security deposit`, `Royalty` and `Indemnity`.
+  Refusing a value of the WRONG kind (`Effective date: 45`) is still M6.
+- ✅ **The benchmark harness now records a source for approximate answers** — closed in
+  v0.5.8, together with the gate rule that had frozen it. Gate 0's flat ban on touching
+  the harness is replaced by the property it stood in for: gate 2 benchmarks the base
+  tree under both harnesses and fails a change that reports the previous release as
+  *better*. The harness also records the `~approx` tag now, so an answer that was read
+  from a literal label and is now read through a synonym fails gate 2.
 - ⬜ **`has_value` moved the wrong way.** Recognising apposition-defined parties added
   879 of 92,709 chunks (95.9% → 96.9%), against the v0.5.6 debt item saying this signal
-  already barely discriminates. Necessary for findability; it makes the sharpening work
-  more urgent, not less.
+  already barely discriminates. v0.5.8 added labelled names on top: of 104,168 real
+  chunks, 112 are value-bearing only because of apposition and 73 only because of a
+  labelled name — 0.18% between them, so the aggregate story is unchanged and both were
+  necessary for findability. It makes the sharpening work more urgent, not less.
+
+**Raised by the v0.5.8 round and deliberately deferred:**
+
+- ⬜ **The free-text sort key still recognises only numbers.** `_pick_field_hit` now
+  asks the answer path whether a chunk carries a value for a *field*, which is what
+  stopped a cross-reference being presented as a legal name. `_utility` asks the same
+  question for *query terms* in free-text search and still scans for `VALUE_RE` only, so
+  a chunk whose only answer is a company name ranks as though it had none. Not changed
+  in v0.5.8 because it moves evidence ranking for every search and needs its own
+  measurement against suite A.
+- ⬜ **A reference abbreviation still splits a clause from its number.** The abbreviation
+  rule covers company forms only, so "Invoice No. 42" is still cut into "Invoice No."
+  and "42" — the label loses its value in exactly the way `Pvt. Ltd.` lost its name.
+  Continuing on a *digit* after `No.`, `Sr.`, `Cl.`, `Art.` is a second rule with its own
+  blast radius. Landed as a strict xfail.
+- ⬜ **The gate does not check its own rules for having got weaker.** v0.5.8 replaced a
+  gate-0 prohibition with a gate-2 measurement, which is a stronger check — but nothing
+  in the gate would have objected if it were a weaker one. The oracle is now verified
+  against the base; `qa_release.py` itself is not.
+- ⬜ **An ALL-CAPS or title-cased abbreviated name is still unread.** The boundary rule
+  decides "did a new sentence start" by whether the next word is lowercase, and in text
+  that is entirely upper-case that carries no information, so `PVT. LTD. AS THE VENDOR`
+  stays split. Deliberate: splitting is the safe direction, and it produces no reading
+  rather than a wrong one.
 
 **Raised by the v0.5.6 whole-product review and deliberately deferred** (65 findings
 across three passes — see `docdex-qa/v0.5.6/ADJUDICATION.md`; 26 fixed, 4 refuted by

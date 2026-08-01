@@ -30,7 +30,11 @@ from docdex.config import DocdexError, Project
 from docdex.inventory import read_inventory
 from docdex.search import tokenize
 
-SCHEMA_VERSION = "6"   # v6: `has_value` now counts a party defined by apposition, so
+SCHEMA_VERSION = "7"   # v7: `has_value` also counts a company presented as a field's
+#                        value ("Vendor: Acme Industries Ltd"). Same reason as v6 —
+#                        derived data computed at index time recomputes on a version
+#                        change and on nothing else.
+#                        v6: `has_value` now counts a party defined by apposition, so
 #                        every existing index must recompute it or the retrieval half
 #                        of that feature stays inert (the column already exists, so
 #                        nothing but a version change forces the recomputation).

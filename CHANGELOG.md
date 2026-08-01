@@ -10,9 +10,158 @@ tell what changed and why without reading the code.
 
 ## [Unreleased]
 
-Next: **v0.5.8** — optional embeddings / RRF via `DOCDEX_EMBED_CMD`, aimed at the
+Next: **v0.5.9** — optional embeddings / RRF via `DOCDEX_EMBED_CMD`, aimed at the
 weakest number docdex has (vaguely-worded search finds the right file first 4 times in
 12). See [ROADMAP.md](ROADMAP.md).
+
+## [0.5.8] — 2026-08-01 — "The three gaps we wrote down"
+
+v0.5.7 shipped with three gaps stated rather than closed. This release closes all
+three, and closing them turned out to mean answering one question properly: **what is a
+field's value, and which field is allowed to have it?**
+
+**In plain terms.** Three things a form-filling tool should obviously do, which docdex
+could not:
+
+1. `Legal name: Beta Holdings Ltd` — the plainest labelled value there is — reported
+   "matched, no clear value". A value had to look like a number, an amount, a date or
+   an email, and a company name is none of those.
+2. `Helios Components Pvt. Ltd.` — a company that writes its legal form in full
+   stops — was never read whole. The text was cut into clauses at every full stop
+   before anything looked at it, leaving `Ltd.` alone.
+3. `Aggregate liability` was answered with a *company*, because the rule deciding which
+   fields may receive one was a list of about forty words to refuse, and neither
+   "aggregate" nor "liability" was on it.
+
+### Fixed
+
+- **A company written after its label is now a value.** `Legal name: Beta Holdings
+  Ltd`, `Vendor: Acme Industries Pvt Ltd`, `Supplier — Delta Components Inc`. Two
+  conditions, both deliberate: a separator must present it as the field's value (so
+  "Supplier reference: Acme Ltd" does not answer `Legal name`), and the field must be
+  one that wants a party. For such a field the name now *beats* a number in the same
+  window — `Legal name: Beta Holdings Ltd, GST 29ABCDE1234F1Z5` answers with the
+  company, which is what was asked for.
+- **A full stop inside a company name no longer ends a clause.** `Pvt.`, `Ltd.`, `Co.`,
+  `Inc.` and their kin keep the sentence going when what follows continues it — a
+  lowercase word, or another such abbreviation. A capitalised ordinary word still ends
+  it, so "Zeta Corporation Ltd. Acme Industries Ltd" stays two companies. This was a
+  tracked strict-xfail from v0.5.7; it is the change with the largest blast radius in
+  the release, because the clause is the unit that keeps one field's value away from
+  another's.
+- **Which fields may be answered with a company is now a type question, asked from an
+  allow-list.** One function says what kind of value a field wants — party, quantity,
+  date, identifier, or unknown — and only a field known to want a party may receive a
+  company. `Aggregate liability`, `Consideration payable`, `Security deposit`,
+  `Royalty` and `Indemnity` were all answered with a company before this and are not
+  now. Neither is a label docdex does not recognise: an unfamiliar field gets nothing,
+  which is a miss an agent can act on rather than a wrong answer it cannot detect.
+  `aliases.json` is how you say what your own label means — declare `Manufacturer` a
+  synonym of `Legal name` and it becomes a party field.
+- **A value no longer loses its unit.** `Renewal term: 24 months  Vendor: Acme Ltd` was
+  answered `24`. Twenty-four *what?* Two causes, both fixed: durations were not among
+  the units a value could carry, and the search for the *next* field's label allowed
+  spaces, so it read "months Vendor" as that label and cut the value down to the bare
+  number. Found while writing this release's tests, in no review.
+- **A cross-reference could be presented as a legal name.** Given sixty chunks reading
+  "Legal name is described in annexure 4 at clause 4.2" and one reading "Legal name:
+  Beta Holdings Ltd", the step that picks which chunk to read scored every decoy as
+  value-bearing and the real answer as empty — it scanned for numbers, and a company
+  name has none. It now asks the same reading that produces the answer. This is the
+  third place that answered "does this text carry a value", and finding it is the same
+  lesson v0.5.6 learned about aliases having three rules for one question.
+
+### Found by the reviews, in this release's own work
+
+- **Two companies joined by `/` or `&` came back as one company that does not exist.**
+  `Legal name: Beta Holdings Ltd / Gamma Systems LLP` returned the whole run, in *both*
+  reading directions. An ampersand belongs inside a name — "Smith & Sons Ltd" — but not
+  after a legal form has already been stated. Two parties where the form asked for one is
+  a disagreement, so neither is picked now. `GmbH & Co. KG` is unreadable as a result,
+  which is the direction this feature errs in on purpose.
+- **A field named with a money word was misread as wanting money.** `Tax Entity`
+  reported "matched, no clear value" with the company sitting right there, because the
+  first version of the registry read a label as an unordered bag of words. The **last**
+  recognised word decides now, since an English compound puts its head noun last; a
+  preposition inverts that ("Fees payable to the vendor" is about fees) and then the kind
+  that refuses a party wins.
+- **A real field label starting with a unit word stopped being a boundary.** The first
+  version of the lost-unit fix refused to read any unit word as the start of a following
+  label, and `Working days:`, `Business days:` and `Calendar days:` are real labels. A
+  unit belongs to the value only when a **number** precedes it.
+
+### Found by running it on the real corpus, which is where the worst of it was
+
+Over 104,168 real chunks this release changed **20 field answers, and every one of them
+was newly wrong.** Neither review pass and no fixture produced a single one:
+
+- **A longer clause let a value window run further.** Keeping `Pvt. Ltd.` in one clause
+  is right — of 5,408 real merge sites the common shapes are `Pvt.`+`Ltd.` and
+  `Ltd. towards` / `Ltd. for` / `Ltd. is`, none of which are sentence ends — but from a
+  signed NDA, *"( Effective Date ) by and between Helios Components Pvt. Ltd. with offices at
+  Meridian House, 2nd Floor"* answered `Effective date: 2`. A **clause** may continue
+  past an abbreviation whenever the sentence does; a **value window** may cross one only
+  when what follows continues the name.
+- **A party field was answered with a number.** From an exported ledger,
+  `…,Vendor Advances,Kestrel India Pvt. Ltd.,8461920000075310642,…` answered `Legal name`
+  with the transaction ID. A field that wants a party is answered by a name or not at
+  all — the registry above is what makes that one rule instead of one more heuristic.
+
+Both real lines are now permanent tests, verbatim.
+
+### Fixed in the benchmark harness, and in the rule that had frozen it
+
+- **The benchmark recorded no source for any `~approx` answer.** Its citation parser
+  anchored at end-of-line, and the `~approx` tag comes after the citation — so gate 2's
+  per-field source comparison was blind for exactly the interesting fields, including
+  the `Legal name` field v0.5.7 was built for. Sources are now read for all 11 fields
+  instead of 9, and the tag itself is recorded, so **a field that used to be read from
+  a literal label and is now read through a synonym fails the gate**. That is a real
+  regression class that nothing could see before.
+- **The gate flatly forbade touching the harness, so a bug in the oracle could never be
+  fixed** — this one had to be left in place for a whole release. The ban is replaced by
+  the property it was standing in for: gate 2 already grades both sides with today's
+  harness, so what actually matters is that a harness change must not report the
+  *previous* release as **better** than its own harness did. The gate now measures that
+  directly — the base tree is benchmarked under both harnesses — and fails the release
+  if the new oracle is kinder. A stricter harness is always allowed. `bench_all.py` was
+  also missing from the list of files that count as the oracle, and now counts.
+- **Six more ways the gate could certify a bad release**, all found by reviewing the
+  gate itself: it compared field *counts* rather than identities, so a harness could
+  stop checking a hard field and add an easy one; both suite-A comparisons iterated
+  today's method list, so a release could delete a hard retrieval method from its own
+  exam; a *removed* citation passed silently, because sources were only compared when
+  both sides had one; the "no new tests" waiver read only committed changes, and the gate
+  supports running on a dirty tree; the base suite's size was measured *after* overlaying
+  this release's `conftest.py`, so a hook that swallows the suite flattened both sides of
+  the comparison meant to catch it; and a finding-to-test map of all-waived rows counted
+  as a map.
+- **A determinism test that failed for a reason unrelated to determinism.** The
+  cross-process check compared raw packets from three sequential subprocesses, and the
+  packet header reports when the index was built *to the minute* — so it went red
+  whenever the three runs straddled a minute boundary, roughly one run in thirty. A
+  determinism check that cries wolf is worse than none, because it teaches you to wave
+  the failure away.
+
+### Measured on the real corpus (104,168 chunks, 10,577 files)
+
+- Every one of the **4** forward name readings is correct: `Legal Name: HELIOS COMPONENTS PRIVATE
+  LIMITED`, `Vendor: Vertex Optics Limited` (through a declared synonym, from a real
+  purchase order), `Legal: Helios Components Private Limited`. v0.5.7's backward reader got 3 of
+  4 *wrong* on this same corpus before the corporate-form rule was added; the forward
+  direction starts from a separator, which is a much stronger signal than word case.
+- The findability signal moved **73** chunks (apposition moved 112) — 0.18% of the
+  corpus. As in v0.5.6 and v0.5.7, this signal barely moves in aggregate; for those 73
+  chunks it is the difference between reachable and unreachable.
+- Schema 6 → 7. `has_value` is computed at index time, so without the version bump the
+  reading would have worked while retrieval stayed inert on every existing index —
+  exactly the mistake v0.5.2 shipped and v0.5.7 nearly repeated.
+
+### Both benchmarks unchanged
+
+Suite B stays at **11/11** in **1,424 tokens** with every field in the same section and
+from the same source; suite A unchanged. That is the intended result: this release fixes
+answers the benchmark does not ask for. 466 tests, up from 427.
 
 ## [0.5.7] — 2026-07-30 — "The name before the label"
 

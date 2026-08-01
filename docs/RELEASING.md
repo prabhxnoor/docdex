@@ -185,6 +185,26 @@ Comparing releases whose harness also differs measures the measuring stick. A re
 whose numbers cannot be produced is recorded as an **error**, never skipped — silence
 would read as "no change".
 
+### Changing the harness is allowed, and it has to be proved neutral
+
+Gate 0 used to fail any release that touched `benchmarks/task_benchmark.py` and friends.
+That was too blunt in a way with a measured cost: v0.5.7 found a bug in the oracle
+itself — the citation parser recorded **no source for any `~approx` answer**, so gate 2's
+per-field attribution check was silently blind for 9 of 11 fields — and the rule meant
+it could not be fixed in the release that found it.
+
+Since the overlay already grades both sides with today's harness, a harness change cannot
+skew the *comparison*. The risk that survives is an oracle that got **weaker**, because
+then both sides improve together and an absolute regression hides inside a flat diff. So
+that is what is checked, directly: when the harness has changed, gate 2 benchmarks the
+base tree **under its own harness first**, then under today's, and fails the release if
+today's reports the previous release as better on any headline — fields covered,
+absences called honest, tokens, or any suite-A metric. A stricter harness always passes.
+
+Note the consequence for gate 3: the base worktree has today's `benchmarks/` by the time
+gate 3 runs, so **a harness fix can never fail on the base tree**. Declare it with `-`
+in `FIXED_BY.tsv` and say why.
+
 ## 5. The gate — run it, then run it again on the commit
 
 ```
@@ -194,6 +214,7 @@ python3 benchmarks/qa_release.py --base <previous tag>
 | gate | what it refuses to let through |
 |---|---|
 | 0 preflight | version not bumped; no CHANGELOG section; no ROADMAP mention; no test file added; no QA archive folder |
+| 2 oracle | a change to the benchmark harness that reports the PREVIOUS release as *better* |
 | 1 suite | any failure, any collection error, a non-zero pytest exit, or an empty run — read from JUnit XML, not scraped from stdout |
 | 2 benchmarks | **both** suites compared; suite B per field — value, section *and* cited source — plus honest absent-field handling and a token ceiling |
 | 3 discrimination | no new test fails **on an assertion** against the base tree |

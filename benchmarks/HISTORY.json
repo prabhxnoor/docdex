@@ -1533,6 +1533,148 @@
         "tokens": 1424
       },
       "version": "0.5.7"
+    },
+    {
+      "recorded_utc": "2026-08-01T17:45:00Z",
+      "ref": "v0.5.8",
+      "sha": "14b93ba",
+      "suite_a": {
+        "meta": {
+          "cases": 12,
+          "corpus_tokens": 54150,
+          "embed_s": 0.2,
+          "files": 162,
+          "index_mb": 1.53,
+          "platform": "macOS-26.5.2-arm64-arm-64bit",
+          "python": "3.9.6",
+          "raw_mb": 1.92,
+          "sync_s": 0.9,
+          "token_model": "chars/4 approximation"
+        },
+        "summary": {
+          "docdex": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 41,
+            "med_tokens": 729
+          },
+          "docdex-fuz": {
+            "answered": 5,
+            "hit1": 4,
+            "hit3": 8,
+            "med_ms": 39,
+            "med_tokens": 363
+          },
+          "docdex-sem": {
+            "answered": 0,
+            "hit1": 0,
+            "hit3": 0,
+            "med_ms": 47,
+            "med_tokens": 609
+          },
+          "docdex-sem-x": {
+            "answered": 4,
+            "hit1": 4,
+            "hit3": 5,
+            "med_ms": 48,
+            "med_tokens": 694
+          },
+          "readall": {
+            "answered": 12,
+            "hit1": 12,
+            "hit3": 12,
+            "med_ms": 7,
+            "med_tokens": 28312
+          }
+        }
+      },
+      "suite_b": {
+        "covered": [
+          "Annual contract value",
+          "Effective date",
+          "GST number",
+          "Governing law",
+          "Legal name",
+          "Liability cap",
+          "PAN",
+          "Payment terms",
+          "Primary contact email",
+          "Registered address",
+          "Renewal term"
+        ],
+        "covered_n": 11,
+        "fields": {
+          "Annual contract value": {
+            "approx": false,
+            "section": "weak",
+            "source": "Finance/untitled (5).xlsx \u00b71"
+          },
+          "Bank IFSC": {
+            "approx": false,
+            "section": "missing",
+            "source": ""
+          },
+          "Effective date": {
+            "approx": false,
+            "section": "answers",
+            "source": "Contracts/scan_8841 copy.docx \u00b713"
+          },
+          "GST number": {
+            "approx": false,
+            "section": "weak",
+            "source": "Archive/Final_v3_USE.xlsx \u00b71"
+          },
+          "Governing law": {
+            "approx": true,
+            "section": "weak",
+            "source": "Contracts/scan_8841 copy.docx \u00b79"
+          },
+          "Legal name": {
+            "approx": true,
+            "section": "answers",
+            "source": "Contracts/scan_8841 copy.docx \u00b73"
+          },
+          "Liability cap": {
+            "approx": false,
+            "section": "answers",
+            "source": "Misc/document1 (4).pdf \u00b73"
+          },
+          "PAN": {
+            "approx": false,
+            "section": "weak",
+            "source": "Archive/Final_v3_USE.xlsx \u00b72"
+          },
+          "Payment terms": {
+            "approx": false,
+            "section": "weak",
+            "source": "Contracts/scan_8841 copy.docx \u00b76"
+          },
+          "Primary contact email": {
+            "approx": false,
+            "section": "weak",
+            "source": "Operations/notes_final.md \u00b73"
+          },
+          "Registered address": {
+            "approx": false,
+            "section": "weak",
+            "source": "Archive/Final_v3_USE.xlsx \u00b74"
+          },
+          "Renewal term": {
+            "approx": false,
+            "section": "answers",
+            "source": "Misc/document1 (4).pdf \u00b77"
+          }
+        },
+        "findable": 11,
+        "honest_absent": [
+          "Bank IFSC"
+        ],
+        "packet_sha256": "ca8293cba23af595e7286b4f1164e92dde5cf5e3357b5d384badf38b82a3394b",
+        "search_loop_tokens": 20096,
+        "tokens": 1424
+      },
+      "version": "0.5.8"
     }
   ]
 }

@@ -18,6 +18,7 @@ pass vacuously, an explicit precondition asserts the fixture is doing its job.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 import subprocess
 import sys
@@ -313,7 +314,24 @@ def test_p7_packet_is_identical_across_processes_and_hash_seeds(tmp_path):
         assert proc.returncode == 0, proc.stderr[-2000:]
         packets.append(proc.stdout)
 
-    assert packets[0] == packets[1] == packets[2], (
+    # The packet header reports when the index was last built, to the MINUTE. The three
+    # subprocesses each build their own index and run in sequence, so whenever they
+    # straddle a minute boundary the raw packets differ for a reason that has nothing to
+    # do with hash ordering — and this test has therefore been intermittently red since
+    # it was written, roughly one run in thirty. A determinism check that cries wolf is
+    # worse than none: it teaches you to wave the failure away.
+    #
+    # Normalise that one line and nothing else, the same way `benchmarks/
+    # task_benchmark.py::canonical_packet` does for the release gate. Its presence is
+    # asserted first, so the normalisation cannot quietly become a no-op that hides a
+    # real difference later.
+    volatile = re.compile(r"^Index: indexed .*$", re.MULTILINE)
+    for i, p in enumerate(packets):
+        assert volatile.search(p), (
+            f"packet {i} has no 'Index: indexed' line, so this normalisation is "
+            f"hiding something else:\n{p[:400]}")
+    fixed = [volatile.sub("Index: <normalized>", p) for p in packets]
+    assert fixed[0] == fixed[1] == fixed[2], (
         "packet depends on PYTHONHASHSEED — ranking is using dict/set iteration "
         "order somewhere")
 

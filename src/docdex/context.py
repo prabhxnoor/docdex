@@ -43,7 +43,24 @@ from docdex import aliases as al
 # The unit is inside its own optional group, `(?:\s*UNIT)?`, not `\s*UNIT?`. Written
 # the second way the `\s*` applied whether or not a unit followed, so every value at
 # the end of a phrase carried a trailing space into the extracted string.
-_UNIT = r"(?i:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b)"
+#
+# Units are one source of truth: the pattern below absorbs them, and `_STOP` refuses
+# to read any of them as the first word of a FOLLOWING field's label. Without that
+# refusal, "Renewal term: 24 months  Vendor: Acme Ltd" cut the value window at "24" —
+# the lookahead for the next `Label:` allows spaces, so it matched "months Vendor:" as
+# though "months Vendor" were the label — and the field was answered `24`. 24 what?
+# Durations were missing from the units too, so even an uncut window yielded `24`.
+# Found while writing this release's tests; a unit is not decoration, it is half the
+# value.
+_UNIT_WORDS = (
+    "percent", "crore", "lakh", "cr", "mn", "million", "billion", "k",
+    "business", "calendar", "working",
+    "days", "day", "weeks", "week", "months", "month", "years", "year",
+    "hours", "hour", "minutes", "minute",
+)
+_DURATION = r"(?:days?|weeks?|months?|years?|hours?|minutes?)\b"
+_UNIT = (r"(?i:%|percent|crore|lakh|cr\b|mn\b|million|billion|k\b"
+         rf"|(?:business|calendar|working)\s+{_DURATION}|{_DURATION})")
 _MONTH = r"(?i:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-zA-Z]*"
 VALUE_RE = re.compile(
     r"([\w.+-]+@[\w-]+\.[\w.-]+)"                      # emails
@@ -98,6 +115,30 @@ def _plain_number(token: str) -> bool:
     return bool(_PLAIN_NUMBER.match(token.strip().rstrip(".,;:")))
 
 
+def first_real_value(text: str):
+    """The first `VALUE_RE` match that states a fact rather than pointing at a place.
+
+    ONE rule, used by every caller that asks "is there a value here" — the findability
+    signal, the field answer, the conflict list and the evidence lines. It used to be
+    the signal's rule alone, and the answer path had none, so "Liability cap: refer to
+    section 9 for details" was presented under `## Answers` with `9` for a value, and
+    "Legal name is described in annexure 4 at clause 4.2" was answered with `4`. A
+    cross-reference tells the reader where to look; it is not what was asked for.
+
+    Found by adversarial review, which arrived at it from the opposite direction (it
+    argued the ranking would pick the wrong chunk) — and it is the third time one
+    question has turned out to have more than one rule answering it. v0.5.6 found three
+    for aliases; this release also found `_pick_field_hit` scanning for numbers while
+    the reading beside it looked for names.
+    """
+    for m in VALUE_RE.finditer(text):
+        if not _plain_number(m.group(0)):
+            return m             # currency, unit, date, month, identifier or email
+        if not _STRUCTURAL_REF.search(text[max(0, m.start() - 24):m.start()]):
+            return m
+    return None
+
+
 def carries_value(text: str) -> bool:
     """Does `text` state a value, as opposed to merely containing a number?
 
@@ -106,11 +147,8 @@ def carries_value(text: str) -> bool:
     only numbers locate parts of a document answers nothing, so flagging it as
     value-bearing spends the ranking tie-break on a chunk that cannot help.
     """
-    for m in VALUE_RE.finditer(text):
-        if not _plain_number(m.group(0)):
-            return True          # currency, unit, date, month, identifier or email
-        if not _STRUCTURAL_REF.search(text[max(0, m.start() - 24):m.start()]):
-            return True
+    if first_real_value(text) is not None:
+        return True
     # A party defined by apposition — "Helios Components Pvt Ltd as the Vendor" — is
     # an answer too, and this is what makes it FINDABLE. Measured on the benchmark
     # corpus: without this the chunk carrying that line was not in a pool of 60 for
@@ -119,7 +157,10 @@ def carries_value(text: str) -> bool:
     # every chunk containing any digit above the one chunk that could answer. Exactly
     # the shape of the v0.5.1 bug, one signal lower down. With it, the chunk enters
     # the pool at position 4 of 6.
-    return carries_apposition(text)
+    # A company presented as a field's value — "Vendor: Acme Industries Ltd" — is the
+    # same kind of answer written the other way round, and needs the same help to be
+    # reachable.
+    return carries_apposition(text) or carries_labelled_name(text)
 STOPWORDS = {
     "the", "and", "for", "with", "from", "this", "that", "all", "any", "our",
     "fill", "find", "form", "please", "using", "about", "what", "which", "name",
@@ -225,14 +266,109 @@ def _trim(text: str, limit: int = EXCERPT_CHARS) -> str:
 # the *next* 'Label:' that follows a value — so a dense "A: x B: y" line yields
 # each field's own value without the catastrophic per-character splitting a bare
 # label-lookahead caused.
-_STOP = re.compile(r"[;\n]|(?<=[.!?])\s|(?<=\S)\s+[^\W\d_][\w '&/()\-]{0,38}?[:_]\s",
-                   re.UNICODE)
+_STOP = re.compile(
+    r"(?P<hard>[;\n])"
+    r"|(?P<sent>(?<=[.!?])\s)"
+    r"|(?P<label>(?<=\S)\s+[^\W\d_][\w '&/()\-]{0,38}?[:_]\s)",
+    re.UNICODE)
+
+# A unit word only belongs to the value when a NUMBER comes before it — see
+# `_unit_of_the_value`. The label lookahead above allows spaces, so in
+# "Renewal term: 24 months Vendor: Acme" it read "months Vendor" as the next label and
+# cut the value down to a bare `24`. Twenty-four what?
+#
+# Refusing unit-initial labels outright was the first attempt and broke the other
+# direction, which adversarial review caught immediately: `Working days:` and
+# `Business days:` are real field labels whose first word is a unit, and they stopped
+# being boundaries at all, so the previous field swallowed them whole.
+_UNIT_HEAD = re.compile(r"(?i:%s)\b" % "|".join(sorted(_UNIT_WORDS, key=len,
+                                                       reverse=True)))
+_ENDS_IN_A_NUMBER = re.compile(r"\d[\d,.]*\s*$")
+
+
+def _unit_of_the_value(before: str, after: str) -> bool:
+    """Does the word starting `after` continue a number that ends `before`?"""
+    return bool(_UNIT_HEAD.match(after) and _ENDS_IN_A_NUMBER.search(before))
+
+_CLAUSE_SPLIT = re.compile(r"(?P<hard>[;\n]+)|(?P<sent>(?<=[.!?])\s+)")
+
+# Abbreviations that live INSIDE a company name, so the full stop after one of them
+# does not end a clause: "Helios Components Pvt. Ltd. as the Vendor" is one clause and
+# one name. Every earlier release split it into three, which is why v0.5.7 shipped a
+# name written this way as a tracked gap — apposition looked backwards from `as` and
+# found only "Ltd.", while the forward window stopped at "Pvt.".
+#
+# Deliberately only NAME abbreviations. A general "a dot before a lowercase word is not
+# a boundary" rule would merge most of a document into one clause, and the clause is
+# the unit that keeps one field's value away from another's.
+_NAME_ABBREV = {
+    "pvt", "ltd", "inc", "corp", "co", "llp", "llc", "plc", "gmbh", "pte", "sdn",
+    "bhd", "pty", "spa", "aps", "oy", "oyj", "ab", "asa", "bv", "nv", "srl", "sa",
+    "ag", "kg", "kk", "mfg", "bros", "intl",
+}
+_WORD_BEFORE_DOT = re.compile(r"([^\W\d_][\w'’&\-]*)\.$")
+_WORD_AT = re.compile(r"[^\W\d_][\w'’&\-]*\.?")
+
+
+def _abbreviation_join(text: str, at: int, resume: int,
+                       inside_a_name_only: bool = False) -> bool:
+    """Is the full stop just before `at` part of a name, rather than a clause end?
+
+    True when the word before it is a name abbreviation AND what follows continues the
+    phrase: a lowercase word ("Ltd. as the Vendor") or another name abbreviation
+    ("Pvt. Ltd."). A capitalised ordinary word means a new sentence really did start,
+    so "Zeta Corporation Ltd. Acme Industries Ltd" stays two clauses and two companies.
+
+    In text that is entirely upper-case neither test can fire — "is this word
+    capitalised" carries no information there, as v0.5.7's real-corpus pass established
+    — so the boundary stays where it is and the name goes unread. A miss, not a wrong
+    answer.
+
+    `inside_a_name_only` is the stricter question a value WINDOW has to ask, and the
+    real corpus is what forced the distinction. Merging "…Pvt. Ltd." with the lowercase
+    word after it is right for a clause — the sentence really does continue — but it
+    also lets a value window run further, and over 104,168 real chunks that changed 20
+    field answers, every one of them into a wrong answer. From a signed NDA:
+
+        "( Effective Date ) by and between Helios Components Pvt. Ltd. with offices at
+         Meridian House, 2nd Floor, …"          ->  Effective date: 2
+
+    So a window may cross a full stop only when what follows continues the NAME
+    (`Pvt.` → `Ltd.`), never merely because the sentence does.
+    """
+    m = _WORD_BEFORE_DOT.search(text[:at])
+    if not m or m.group(1).lower() not in _NAME_ABBREV:
+        return False
+    nxt = _WORD_AT.match(text, resume)
+    if not nxt:
+        return False
+    word = nxt.group(0)
+    low = word.lower().rstrip(".")
+    if inside_a_name_only:
+        return bool(low in _NAME_ABBREV
+                    or (word[:1].isupper() and low in _NAME_PART))
+    return bool(word[:1].islower() or low in _NAME_ABBREV)
 
 
 def _clauses(text: str) -> List[str]:
-    """Split text into clauses on ';', newlines, and sentence ends."""
-    parts = re.split(r"[;\n]+|(?<=[.!?])\s+", text)
-    return [p.strip() for p in parts if p and p.strip()]
+    """Split text into clauses on ';', newlines, and sentence ends.
+
+    A sentence end that is really an abbreviation inside a name is not a boundary —
+    see `_abbreviation_join`.
+    """
+    out: List[str] = []
+    start = 0
+    for m in _CLAUSE_SPLIT.finditer(text):
+        if m.lastgroup == "sent" and _abbreviation_join(text, m.start(), m.end()):
+            continue
+        piece = text[start:m.start()].strip()
+        if piece:
+            out.append(piece)
+        start = m.end()
+    tail = text[start:].strip()
+    if tail:
+        out.append(tail)
+    return out
 
 
 # Same tokenizer as search.tokenize, but keeping offsets. Positions matter here:
@@ -249,10 +385,33 @@ def _token_spans(text: str) -> List[tuple]:
 
 
 def _cut_after(text: str, end: int) -> str:
-    """The value region that follows a label, cut before the next label/delimiter."""
+    """The value region that follows a label, cut before the next label/delimiter.
+
+    Skips a sentence end that is an abbreviation inside a name, for the same reason
+    `_clauses` does — otherwise "Legal name: Helios Components Pvt. Ltd." yields a
+    window of "Helios Components Pvt", which names no company that exists.
+    """
     after = text[end:]
-    stop = _STOP.search(after)
-    window = after[:stop.start()] if stop else after
+    window = after
+    # `search(pos)` rather than `finditer`, because a rejected match must not consume
+    # the text inside it: the label alternative allows spaces, so the match rejected in
+    # "24 months Vendor:" spans the real boundary before "Vendor" as well, and scanning
+    # on from its END lost that boundary and returned the next field's value too.
+    pos = 0
+    while True:
+        m = _STOP.search(after, pos)
+        if m is None:
+            break
+        if (m.lastgroup == "sent"
+                and _abbreviation_join(after, m.start(), m.end(),
+                                       inside_a_name_only=True)) or (
+                m.lastgroup == "label"
+                and _unit_of_the_value(after[:m.start()],
+                                       after[m.start():].lstrip())):
+            pos = m.start() + 1
+            continue
+        window = after[:m.start()]
+        break
     return re.sub(r"^[\s:_\-]+", "", window).strip()
 
 
@@ -355,14 +514,26 @@ def label_window(text: str, label: str, label_terms: set,
 
     Returns (None, None) when the label isn't present at all.
     """
+    end, how = _label_end(text, label, label_terms, alias_groups)
+    if end is None:
+        return None, None
+    return _cut_after(text, end), how
+
+
+def _label_end(text: str, label: str, label_terms: set, alias_groups=None) -> tuple:
+    """(offset just past this field's label, how it was matched), or (None, None).
+
+    Split out of `label_window` because reading a NAME after a label needs to know
+    whether a separator follows it, which the cut window has already thrown away.
+    """
     spans = _token_spans(text)
     for stemwise, how in ((False, "exact"), (True, "stem")):
         end = _terms_end(spans, label_terms, stemwise)
         if end is not None:
-            return _cut_after(text, end), how
+            return end, how
     end = _alias_end(spans, label, alias_groups)
     if end is not None:
-        return _cut_after(text, end), "alias"
+        return end, "alias"
     return None, None
 
 
@@ -436,21 +607,140 @@ APPOS_MAX_TOKENS = 8       # a name, not a paragraph: recitals run long
 # adversarial review.
 _NAME_JOIN = re.compile(r"\s*|\.\s+|\s*[&'’/\-]\s*")
 
-# Words in a field's own label that say it wants a QUANTITY, not a party. Apposition
-# supplies a corporate entity, and it was field-agnostic: a document reading "Helios
-# Components Pvt Ltd as the limitation of liability" put a company under `## Answers`
-# for `Liability cap`. Found by adversarial review.
+# `&` and `/` belong INSIDE a name ("Smith & Sons Ltd", "B S R & Co. LLP") but they
+# join two DIFFERENT companies once a legal form has already been stated:
+# "Beta Holdings Ltd / Gamma Systems LLP" is two parties, and both readers returned it
+# as one company that does not exist. Found by adversarial review.
 #
-# A word list is a poor substitute for knowing a field's type, and it is explicitly a
-# stand-in until the typed field registry (M6 on the roadmap). It errs toward
-# refusing, which is the safe direction: the value still appears as evidence.
-_QUANTITY_LABEL = {
-    "cap", "amount", "value", "total", "fee", "fees", "price", "cost", "rate",
-    "term", "terms", "date", "dates", "number", "no", "id", "count", "quantity",
-    "percentage", "percent", "duration", "days", "months", "years", "limit",
-    "sum", "budget", "revenue", "turnover", "salary", "tax", "gst", "pan",
-    "ifsc", "code", "period", "deadline", "balance", "discount", "interest",
+# Two entities where the form asked for one is a disagreement, not a value, so neither
+# reader picks one: the name is refused and the window still shows under
+# `## Needs follow-up`. The cost is that "GmbH & Co. KG" is unreadable — a miss, which
+# is the direction this whole feature errs in.
+_NAME_CONJUNCTION = re.compile(r"\s*[&/]\s*")
+
+# ------------------------------------------ what kind of value does a field want? ---
+#
+# v0.5.7 decided which fields could be answered with a company by a DENY-list of about
+# forty quantity words. Every other label was allowed one, so `Aggregate liability` —
+# whose words appear in no list — was answered "Helios Components Pvt Ltd", and so was
+# a label docdex had never seen. A deny-list has to enumerate everything that can go
+# wrong, and the cost of one missing entry is a confidently wrong answer.
+#
+# So it is asked as a type question instead, and answered from an ALLOW-list: only a
+# field known to want a PARTY may be answered with a company. An unfamiliar label gets
+# nothing — a miss an agent can act on — and `aliases.json` is how a user says what
+# their own label means.
+#
+# A deny signal beats an allow signal. `Vendor turnover` names a party and asks for a
+# number, and the number is what it wants.
+#
+# `party` is the only kind acted on today. The others are named rather than collapsed
+# into "not a party" because this is the one place that claims to know a field's type,
+# and a registry that calls `Effective date` a quantity is wrong exactly where it
+# matters. Refusing a value of the WRONG kind ("Effective date: 45") is M6.
+_PARTY_WORDS = {
+    "party", "parties", "counterparty", "counterparties", "entity", "entities",
+    "company", "companies", "firm", "organisation", "organization", "corporation",
+    "name", "names", "vendor", "vendors", "supplier", "suppliers", "seller",
+    "sellers", "buyer", "buyers", "purchaser", "customer", "client", "clients",
+    "contractor", "contractors", "subcontractor", "licensor", "licensee", "lessor",
+    "lessee", "landlord", "tenant", "employer", "employee", "borrower", "lender",
+    "guarantor", "consultant", "provider", "manufacturer", "distributor", "reseller",
+    "partner", "signatory", "applicant", "bidder", "payee", "payer", "principal",
+    "agent", "trustee", "beneficiary", "transferor", "transferee", "assignor",
+    "assignee", "insurer", "insured", "developer", "owner", "operator", "consignee",
+    "consignor", "shipper", "carrier", "importer", "exporter", "promoter", "sponsor",
+    "affiliate", "subsidiary", "bank", "banker", "bidders", "awardee",
 }
+_QUANTITY_WORDS = {
+    "cap", "amount", "value", "total", "subtotal", "fee", "fees", "price", "cost",
+    "rate", "sum", "budget", "revenue", "turnover", "salary", "wage", "tax", "limit",
+    "ceiling", "floor", "balance", "discount", "interest", "consideration", "deposit",
+    "royalty", "royalties", "indemnity", "penalty", "liability", "liabilities",
+    "advance", "retainer", "premium", "charge", "charges", "payable", "receivable",
+    "quantum", "count", "quantity", "volume", "weight", "size", "share", "shares",
+    "equity", "stake", "margin", "commission", "percentage", "percent", "instalment",
+    "installment", "term", "terms", "duration", "tenure", "period", "days", "months",
+    "years", "hours",
+}
+_DATE_WORDS = {
+    "date", "dates", "deadline", "expiry", "expiration", "commencement", "effective",
+    "anniversary", "maturity", "due", "renewal", "signed", "executed",
+}
+_ID_WORDS = {
+    "number", "no", "nos", "id", "code", "reference", "ref", "gst", "gstin", "pan",
+    "tan", "cin", "tin", "vat", "ifsc", "swift", "iban", "account", "licence",
+    "license", "registration", "permit", "invoice", "po", "isbn", "serial", "uid",
+    "aadhaar", "passport", "phone", "mobile", "telephone", "fax", "email", "url",
+    "website", "pincode", "zip",
+}
+# Ordered: the kinds that REFUSE a party are asked first, so a label naming both
+# ("Vendor turnover") resolves to the one that costs less to get wrong.
+_FIELD_WORDS = (
+    ("quantity", _QUANTITY_WORDS),
+    ("date", _DATE_WORDS),
+    ("identifier", _ID_WORDS),
+    ("party", _PARTY_WORDS),
+)
+
+
+# Words that invert a compound's head. "Fees payable **to** the vendor" is about fees,
+# not about the vendor, so the last recognised word stops being the one that decides.
+_LABEL_INVERTS = {"of", "to", "for", "per", "from", "on", "by", "with", "under"}
+
+
+def _direct_kind(label: str) -> Optional[str]:
+    """This label's kind from its own words, or None if none of them is recognised.
+
+    The LAST recognised word decides, because an English compound puts its head noun
+    last: `Vendor turnover` is a quantity and `Tax Entity` is a party, and reading the
+    label as an unordered bag of words gets the second one wrong — which it did, until
+    adversarial review pointed at `Tax Entity` reporting "matched, no clear value" with
+    the company sitting right there.
+
+    A preposition inverts that order, and rather than parse the phrase, the label falls
+    back to "any kind that refuses a party wins". That is the safe direction: the cost is
+    a company not read, and the cost of the other direction is a company presented as an
+    amount.
+    """
+    toks = [t.lower() for t in tokenize(label)]
+    if _LABEL_INVERTS & set(toks):
+        for kind, words in _FIELD_WORDS:
+            if set(toks) & words:
+                return kind
+        return None
+    for tok_text in reversed(toks):
+        for kind, words in _FIELD_WORDS:
+            if tok_text in words:
+                return kind
+    return None
+
+
+def field_kind(label: str, alias_groups=None) -> str:
+    """What kind of value this field wants: party / quantity / date / identifier /
+    unknown.
+
+    Decided from the label's own words first, then from a synonym the user declared in
+    `aliases.json` — a form that says `Manufacturer` is a party field because its owner
+    said so. The declared path returns the group's kind, not simply "party", so
+    declaring `exposure ceiling` a synonym of `Liability cap` cannot smuggle a company
+    into a field that wants an amount.
+    """
+    direct = _direct_kind(label)
+    if direct:
+        return direct
+    label_stems = [stem(t) for t in tokenize(label)]
+    if not label_stems:
+        return "unknown"
+    for group in alias_groups or []:
+        phrase_stems = [[stem(t) for t in tokenize(p)] for p in group]
+        if label_stems not in phrase_stems:
+            continue                   # this group is not about this field
+        kinds = {_direct_kind(p) for p in group} - {None}
+        for kind, _words in _FIELD_WORDS:
+            if kind in kinds:
+                return kind
+    return "unknown"
 
 # A run of capitalised words is NOT enough to be a legal name, and the real corpus is
 # what proved it. Running this feature over 92,709 real chunks read four names, of
@@ -503,6 +793,9 @@ def _proper_name_before(text: str, at: int, defined_term: bool = False) -> str:
         # is worse than no name. Found by adversarial review.
         if not _NAME_JOIN.fullmatch(text[end:right_edge]):
             break
+        if (tok.lower().rstrip(".") in _CORPORATE_FORM
+                and _NAME_CONJUNCTION.fullmatch(text[end:right_edge])):
+            return ""                  # "… Ltd / Gamma Systems LLP" — two companies
         if tok[:1].isupper() or tok.lower() in _NAME_PART:
             kept.append((tok, start, end))
         elif kept and tok.isdigit() and idx and spans[idx - 1][0][:1].isupper():
@@ -535,6 +828,107 @@ def _proper_name_before(text: str, at: int, defined_term: bool = False) -> str:
     if not defined_term and kept[0][0].lower().rstrip(".") not in _CORPORATE_FORM:
         return ""                      # a capitalised run is not a legal name
     return text[kept[-1][1]:kept[0][2]].strip()
+
+
+def _proper_name_at(text: str) -> str:
+    """The company named at the very START of `text`, or "".
+
+    The forward twin of `_proper_name_before`, for the plainest form there is:
+    `Legal name: Beta Holdings Ltd`. v0.5.7 could read a name written *before* its
+    label and not one written after it, because a value had to look like a number, an
+    amount, a date or an email — and a company name is none of those, so the field
+    reported "matched, no clear value".
+
+    Same rules as the backward reader, and for the same reasons: the run must contain a
+    capitalised word that is not merely a suffix, it may not be longer than
+    `APPOS_MAX_TOKENS` (refused rather than truncated — a cut name is a different
+    company), and it must END in a corporate form, which is what the real corpus proved
+    separates a company from a capitalised phrase. Here the run is TRIMMED back to its
+    last corporate form rather than rejected outright, because a forward run starts
+    where the value starts and the words after the legal form are the sentence
+    continuing: "Beta Holdings Ltd shall deliver the services".
+
+    Once a legal form has been read, a lowercase joining word ends the name — otherwise
+    "Beta Holdings Ltd and Gamma Systems LLP" comes back as one company that does not
+    exist.
+    """
+    spans = [(m.group(0), m.start(), m.end())
+             for m in _TOKEN_SPAN_RE.finditer(text)]
+    if not spans or not spans[0][0][:1].isupper():
+        return ""
+    if text[:spans[0][1]].strip(" \t\"'“‘("):
+        return ""                      # something other than the name starts here
+    kept: List[tuple] = []
+    seen_form = False
+    for idx, (tok_text, start, end) in enumerate(spans):
+        if kept and not _NAME_JOIN.fullmatch(text[kept[-1][2]:start]):
+            break
+        low = tok_text.lower().rstrip(".")
+        if seen_form and kept and _NAME_CONJUNCTION.fullmatch(
+                text[kept[-1][2]:start]):
+            return ""                  # "Ltd / Gamma …" — two companies, not one
+        if seen_form and not tok_text[:1].isupper() and low in _NAME_PART:
+            break
+        if tok_text[:1].isupper() or low in _NAME_PART:
+            kept.append((tok_text, start, end))
+        elif (kept and tok_text.isdigit() and idx + 1 < len(spans)
+              and spans[idx + 1][0][:1].isupper()):
+            kept.append((tok_text, start, end))   # "Group 4 Sentinel" is one company
+        else:
+            break
+        if low in _CORPORATE_FORM:
+            seen_form = True
+        if len(kept) >= APPOS_MAX_TOKENS:
+            nxt = spans[idx + 1] if idx + 1 < len(spans) else None
+            if nxt and _NAME_JOIN.fullmatch(text[end:nxt[1]]) and (
+                    nxt[0][:1].isupper() or nxt[0].lower() in _NAME_PART):
+                return ""              # longer than can be read safely — refuse
+            break
+    while kept and kept[-1][0].lower().rstrip(".") not in _CORPORATE_FORM:
+        kept.pop()
+    if not kept:
+        return ""                      # a capitalised run is not a legal name
+    if not any(t[:1].isupper() and t.lower().rstrip(".") not in _NAME_PART
+               for t, _s, _e in kept):
+        return ""                      # only suffixes: "Company", "Ltd" — not a name
+    return text[kept[0][1]:kept[-1][2]].strip()
+
+
+# A label, then a separator, then a word. The shape of a document presenting a value
+# as a field's own, which is what a name reading requires — see `_presented_as_a_field`.
+_FIELD_SEPARATOR = re.compile(r"[ \t]*[:_=–—-]")
+_LABELLED_NAME = re.compile(
+    r"(?<=[^\W\d_])[ \t]*[:_=–—-][ \t]*(?=[^\W\d_])")
+
+
+def _presented_as_a_field(text: str, end: int) -> bool:
+    """Does a separator sit immediately after the label that ends at `end`?
+
+    A name is read forward only when the document PRESENTS it as this field's value —
+    `Legal name: Beta Holdings Ltd` — and not merely because a company follows a label
+    word somewhere in prose. Requiring the separator does two things: it keeps
+    "Supplier reference: Acme Ltd" from answering `Legal name` (the separator does not
+    follow *supplier*), and it keeps this reading identical in shape to
+    `carries_labelled_name`, which decides FINDABILITY with no label to work from and
+    can only look for the same thing. A signal narrower than the reading it serves is
+    the defect v0.5.6 spent a release closing for aliases.
+    """
+    return bool(_FIELD_SEPARATOR.match(text, end))
+
+
+def carries_labelled_name(text: str) -> bool:
+    """Does `text` present a company as some field's value — "Vendor: Acme Ltd"?
+
+    The findability half of reading a name written after its label. Deliberately WITHOUT
+    the field-type test: this signal decides which chunks are reachable and cannot know
+    which field will ask. Broader than the reading only spends a ranking tie-break;
+    narrower than the reading hides the one chunk that could answer, which is what kept
+    v0.5.7's apposition line out of a candidate pool of sixty.
+    """
+    for m in _LABELLED_NAME.finditer(text):
+        if _proper_name_at(text[m.end():]):
+            return True
+    return False
 
 
 def _name_follows_a_label(text: str, name: str) -> bool:
@@ -634,10 +1028,16 @@ def apposition_window(text: str, label: str, label_terms: set,
 
 def _value_lines(text: str, terms: set) -> List[str]:
     """Clauses that mention a query term *by token* (so 'term' no longer matches
-    'terms') and carry a concrete value."""
+    'terms') and carry a concrete value.
+
+    "A concrete value" is `first_real_value`, the same rule the index-level signal and
+    the field answer use. It used to be any `VALUE_RE` match, so a clause whose only
+    number was "clause 4.2" counted as carrying a value and won the ranking tie-break
+    from a chunk that could actually answer.
+    """
     out = []
     for clause in _clauses(text):
-        if (terms & set(tokenize(clause))) and VALUE_RE.search(clause):
+        if (terms & set(tokenize(clause))) and first_real_value(clause) is not None:
             out.append(_trim(clause, 160))
     return out
 
@@ -718,7 +1118,7 @@ def _field_values(text: str, label: str, label_terms: set,
         # never had.
         if foreign_terms and (foreign_terms & set(tokenize(w))):
             continue
-        m = VALUE_RE.search(w)
+        m = first_real_value(w)
         if m:
             out.append((clause, re.sub(r"\s+", " ", m.group(0)).strip()))
     return out
@@ -739,16 +1139,44 @@ def _field_answer(text: str, label: str, label_terms: set, foreign_terms: set,
     """
     best = None                     # (rank, value, display, clean, how)
     rank = _HOW_RANK
+    wants_party = field_kind(label, alias_groups) == "party"
     for clause in _clauses(text):
-        w, how = label_window(clause, label, label_terms, alias_groups)
+        end, how = _label_end(clause, label, label_terms, alias_groups)
+        if end is None:
+            continue
+        w = _cut_after(clause, end)
         if not w:
             continue
-        m = VALUE_RE.search(w)
-        if not m:
-            continue
-        value = re.sub(r"\s+", " ", m.group(0)).strip()
-        display = _trim(w, 160)
-        clean = not (foreign_terms & set(tokenize(w)))
+        value = display = None
+        if wants_party and _presented_as_a_field(clause, end):
+            # A party field prefers the name over any number in the same window:
+            # "Legal name: Beta Holdings Ltd, GST 29ABCDE1234F1Z5" is answered with the
+            # company, not the tax number that follows it. The name is exactly and only
+            # what was read, so it is also what is shown, and it is what the
+            # cross-field check looks at — the window may run on past the name, and
+            # judging the name by words it does not contain would downgrade a reading
+            # that is not in doubt.
+            name = _proper_name_at(w)
+            if name:
+                value = display = name
+                clean = not (foreign_terms & set(tokenize(name)))
+        if value is None:
+            if wants_party:
+                # A company is not a number, in any document. Without this, any digits
+                # inside a party field's window could become its value — and on the real
+                # corpus they did: an exported ledger reading
+                # "…,Vendor Advances,Kestrel India Pvt. Ltd.,8461920000075310642,…"
+                # answered `Legal name` with the transaction ID. The registry is what
+                # makes this one line instead of a heuristic: a field that wants a party
+                # is answered by a name or not at all, and "not at all" still shows the
+                # window under `## Needs follow-up` for the agent to read.
+                continue
+            m = first_real_value(w)
+            if not m:
+                continue
+            value = re.sub(r"\s+", " ", m.group(0)).strip()
+            display = _trim(w, 160)
+            clean = not (foreign_terms & set(tokenize(w)))
         # Prefer a literal label, then a clean window, then first seen.
         key = (rank[how], 0 if clean else 1)
         if best is None or key < best[0]:
@@ -765,9 +1193,9 @@ def _field_answer(text: str, label: str, label_terms: set, foreign_terms: set,
     # first seen. Returning the first clause that produced anything let an ambiguous
     # reading suppress an unambiguous one right after it, reporting a weak answer
     # where a found one was available. Found by adversarial review.
-    # Apposition supplies a corporate entity, so a field whose own label asks for a
-    # quantity is not a candidate for it at all.
-    if {t.lower() for t in tokenize(label)} & _QUANTITY_LABEL:
+    # Apposition supplies a corporate entity, so only a field known to want a party is
+    # a candidate for it — see `field_kind`.
+    if not wants_party:
         return None
     fallback = None
     for clause in _clauses(text):
@@ -811,17 +1239,36 @@ def _approx_match(text: str, content: set, alias_extra: Optional[set] = None) ->
     return False
 
 
-def _pick_field_hit(hits: List[dict], label: str, extra_terms: set) -> Optional[dict]:
+def _pick_field_hit(hits: List[dict], label: str, extra_terms: set,
+                    alias_groups=None) -> Optional[dict]:
     """Rerank a field's candidates by task utility, not raw relevance: prefer a
     chunk that actually carries a value and covers the field's words, over a
-    higher-BM25 chunk that merely shares vocabulary with the field label."""
+    higher-BM25 chunk that merely shares vocabulary with the field label.
+
+    "Carries a value" here has to mean the same thing it means to the reading that
+    follows, or this step throws away the only chunk that could answer. It did exactly
+    that: given sixty chunks reading "Legal name is described in annexure 4 at clause
+    4.2" and one reading "Legal name: Beta Holdings Ltd", a chunk-wide `VALUE_RE` scan
+    scored every decoy 1 and the answer 0, so a cross-reference was presented as the
+    company's legal name. A company name contains no digits — which is the whole reason
+    reading one needed its own rules — so this asks the answer path itself as well.
+
+    Widening only: a chunk that already counted still counts, so no field's existing
+    pick can move. The free-text sort key `_utility` asks the same question for query
+    terms rather than for a field and still recognises numbers only; changing that
+    moves evidence ranking for every search, so it needs its own measurement against
+    suite A and is tracked, not smuggled in here.
+    """
     if not hits:
         return None
     label_terms = set(tokenize(label))
 
     def utility(h: dict):
         low = h["text"].lower()
-        has_value = 1 if _value_lines(h["text"], label_terms | extra_terms) else 0
+        has_value = 1 if (
+            _value_lines(h["text"], label_terms | extra_terms)
+            or _field_answer(h["text"], label, label_terms, set(), alias_groups)
+        ) else 0
         coverage = sum(1 for t in label_terms if t in low)
         return (has_value, coverage, h["score"])
 
@@ -1049,7 +1496,7 @@ def build_packet(project: Project, task: str, budget: int = 3000,
             foreign = all_label_tokens - label_terms   # other fields' label tokens
             fhits = _candidates(project, label, folder, pool=6, exclude=skip,
                                 alias_groups=alias_groups)
-            best = _pick_field_hit(fhits, label, label_terms)
+            best = _pick_field_hit(fhits, label, label_terms, alias_groups)
             if not best:
                 resolved.append({"label": label, "has_value": False,
                                  "line": None, "hit": None})

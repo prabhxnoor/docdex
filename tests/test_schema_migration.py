@@ -317,6 +317,68 @@ def test_the_new_column_is_populated_by_the_upgrade_not_just_added(project,
         assert no_value[0] == 0, "a chunk with no value in it was flagged"
 
 
+def test_a_widened_value_signal_is_recomputed_on_an_existing_index(tmp_path):
+    """The half-working release this project has now nearly shipped twice.
+
+    `has_value` is derived data, computed once when a chunk is indexed. When a release
+    WIDENS what counts as a value — v0.5.7 added a party defined by apposition, v0.5.8
+    added a company presented as a field's value — the reading half starts working
+    immediately and the retrieval half stays frozen at whatever the old code stored,
+    on every index already on disk. Nothing but a schema-version change recomputes it,
+    because the column is already there and `CREATE TABLE IF NOT EXISTS` has nothing to
+    do.
+
+    v0.5.2 shipped the crashing version of this mistake. v0.5.7 caught the silent
+    version of it only by noticing that a real sync reindexed 22 files instead of
+    10,521. This test is that observation, made mechanical: an index built by the
+    previous release, holding the previous release's answer for a chunk, must come out
+    of `sync` holding this release's answer.
+    """
+    root = tmp_path / "widened"
+    root.mkdir()
+    (root / "party.txt").write_text("Vendor: Acme Industries Pvt Ltd\n",
+                                    encoding="utf-8")
+    project = run_init(root, quiet=True)
+    sync_index(project)
+
+    # Make it look exactly like an index the PREVIOUS release left behind: the column
+    # is present and its stored answer is the old one.
+    conn = open_db(project)
+    try:
+        current = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema'").fetchone()[0]
+        previous = str(int(current) - 1)
+        conn.execute("UPDATE chunks SET has_value = 0 WHERE rel = 'party.txt'")
+        conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema',?)",
+                     (previous,))
+        conn.commit()
+        stale = conn.execute(
+            "SELECT has_value FROM chunks WHERE rel = 'party.txt'").fetchone()[0]
+    finally:
+        conn.close()
+    assert stale == 0, "the fixture failed to plant the previous release's answer"
+
+    sync_index(project)
+
+    conn = open_db(project)
+    try:
+        got = conn.execute(
+            "SELECT has_value FROM chunks WHERE rel = 'party.txt'").fetchone()[0]
+        version = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema'").fetchone()[0]
+    finally:
+        conn.close()
+    assert version == current, (
+        f"sync left the index at schema {version}, so it will re-upgrade every time")
+    assert got == 1, (
+        "a chunk this release counts as value-bearing kept the previous release's "
+        "answer, so the retrieval half of the feature is inert on every existing index")
+    # And the rebuild that recomputed it left the text searchable, not an empty index.
+    hits = index_db.search(project, "Acme Industries", limit=5)
+    assert hits and any("Acme Industries" in h["text"] for h in hits), (
+        "the recomputation rebuilt an index that can no longer find the document")
+
+
 # ------------------------------- D2: a failed upgrade must not destroy the index
 
 
