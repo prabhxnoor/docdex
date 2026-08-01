@@ -157,6 +157,20 @@ Both real lines are now permanent tests, verbatim.
   reading would have worked while retrieval stayed inert on every existing index —
   exactly the mistake v0.5.2 shipped and v0.5.7 nearly repeated.
 
+### Two things this deliberately does not close, said plainly
+
+- **The conflict list still accepts a cross-reference as a value.** `first_real_value` is
+  now the one rule for the index signal, the field answer and the per-field conflict list,
+  but not for free-text conflict detection — which changes how conflicts are grouped for
+  every search and wants its own measurement. Seen on the real corpus minutes after this
+  release: `Governing law` reported *"2 values disagree — `1996` vs `12.1`"*, a statute
+  year against a clause number.
+- **A field can still be answered with a whole clause** when nothing inside its window
+  looks like a value — `Governing law` on real contracts answers *"AND DISPUTE RESOLUTION
+  12.1 Governing law and jurisdiction The provisions of this Agreement shall…"*. The
+  window is the right one; what is missing is a check that a value region reading as a
+  full clause is probably not a value. Tracked from v0.5.7 and unchanged.
+
 ### Both benchmarks unchanged
 
 Suite B stays at **11/11** in **1,424 tokens** with every field in the same section and

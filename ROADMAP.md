@@ -839,6 +839,23 @@ not oversights — each was reproduced or reasoned about, none is fixed):
 
 **Raised by the v0.5.8 round and deliberately deferred:**
 
+- ⬜ **The CONFLICT path still accepts a cross-reference as a value.** v0.5.8 made
+  `first_real_value` the single answer to "is there a value here" for the index signal,
+  the field answer and the per-field conflict list — but not for `_value_and_position`,
+  which finds the value nearest a query term in free-text conflict detection. Seen live
+  on the real corpus immediately after the release: filling `Governing law` reported
+  *"2 values disagree — `1996` vs `12.1`"*, which is a statute year against a clause
+  number. A fabricated conflict is on the "never confidently wrong" list. Left out of
+  v0.5.8 because it changes free-text conflict grouping, which wants its own measurement;
+  the field-level path is fixed and this one is not, and the changelog says so.
+- ⬜ **A forward reading of a synonym window still returns a clause, not a value** — the
+  v0.5.7 item below, with a fresh real example: `Governing law` on the real corpus answers
+  *"AND DISPUTE RESOLUTION 12.1 Governing law and jurisdiction The provisions of this
+  Agreement shall, in all respects, be governed by…"*. The window is the field's own, so
+  this is not leakage; it is that no value was recognised inside it and the whole window
+  was shown as though one had been. A plausibility check — a value region that reads as a
+  full clause is probably not a field value — is the shape of the fix.
+
 - ⬜ **The free-text sort key still recognises only numbers.** `_pick_field_hit` now
   asks the answer path whether a chunk carries a value for a *field*, which is what
   stopped a cross-reference being presented as a legal name. `_utility` asks the same
