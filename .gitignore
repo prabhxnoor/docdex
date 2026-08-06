@@ -26,3 +26,10 @@ _index/
 # QA gate scratch (should never be committed)
 _qa_cache/
 _qa_junit_*.xml
+
+# The sanitisation watchlist holds, in plaintext, the real values that were removed
+# from this repository. It exists so tests/test_no_real_identifiers.py can catch them
+# coming back. Publishing hashes of them instead was not good enough: one-word
+# entries like a surname or a city are recoverable from a wordlist, which would
+# re-disclose exactly what was removed. It must never be committed.
+.sanitisation-watchlist

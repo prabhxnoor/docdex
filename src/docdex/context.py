@@ -33,7 +33,7 @@ from docdex import aliases as al
 # Alternative ORDER decides what gets extracted, because the first alternative that
 # matches at a position wins. Longest-and-most-specific first, therefore:
 #
-#   - Emails before everything: `user123@x.com` used to yield the bare `123`.
+#   - Emails before everything: `user123@example.invalid` used to yield the bare `123`.
 #   - Identifiers before bare numbers: `29ABCDE1234F1Z5` — a GSTIN — used to yield
 #     `29`, so a conflict entry displayed "29" as the value. Exactly the bug v0.5.0
 #     fixed for dates (`31/12/2026` extracting as `31`), left standing one branch

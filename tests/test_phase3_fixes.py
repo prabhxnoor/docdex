@@ -129,6 +129,14 @@ def test_dense_multilabel_line_does_not_contaminate(tmp_path):
     assert "PAN" not in gst[0] and "Liability" not in gst[0] and "Vendor" not in gst[0]
     pan = [l for l in ans if l.startswith("- PAN:")]
     assert pan and "ZXCVB9876K" in pan[0] and "GST" not in pan[0]
+    # CIN was in the fixture and requested as a field, but nothing asserted it, so the
+    # longest identifier here — 21 characters, the one most likely to be truncated by a
+    # window rule — was the only one not actually checked.
+    cin = [l for l in ans if l.startswith("- CIN:")]
+    assert cin and "U72900MH2019PTC123456" in cin[0], (
+        "the CIN was not read whole from a dense multi-label line: %s" % (cin or ans))
+    assert "PAN" not in cin[0] and "Liability" not in cin[0], (
+        "the CIN answer picked up a neighbouring field: %s" % cin[0])
 
 
 # ---- DDX-030: present facts must not be reported missing at display score 0 -

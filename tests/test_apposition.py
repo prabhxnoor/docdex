@@ -47,7 +47,12 @@ from docdex.sync import run_sync
 # `party` and `parties` are included deliberately: they are the most dangerous
 # synonyms for this feature, because contracts use them in sentences that also carry
 # other fields' values ("the parties agree the renewal term is 24 months").
-ALIASES = {"legal name": ["vendor", "supplier", "party", "parties", "legal entity"],
+# `counterparty` is declared so the confidentiality-clause case below actually reaches
+# the reader. Without it that fixture matched nothing at all — the packet came back
+# `Legal name: not found (tried: legal, name)` and the test's "no name was read"
+# assertion passed on the words "not found", proving nothing.
+ALIASES = {"legal name": ["vendor", "supplier", "party", "parties", "legal entity",
+                          "counterparty"],
            "payment terms": ["payment schedule"],
            "liability cap": ["limitation of liability"]}
 
@@ -382,7 +387,8 @@ def test_a_number_touching_the_connective_is_still_refused(tmp_path):
 
 
 # =========================== what the REAL corpus taught this feature ============
-# Verbatim lines from the real corpus that this feature read wrongly before the
+# Shape-preserving reconstructions of real corpus lines this feature read wrongly
+# before the
 # corporate-form requirement. Kept as tests because no review produced them and no
 # synthetic fixture would have: they are title-cased slide text, upper-cased invoice
 # notes and a role description, and all three are ordinary in real document sets.
@@ -408,17 +414,30 @@ def test_real_corpus_lines_that_are_not_names(tmp_path, text, forbidden):
 def test_the_real_corpus_line_that_IS_a_name_still_works(tmp_path):
     """The one correct reading on the real corpus must survive the tightening.
 
-    Verbatim from a partner POC agreement. A guard against over-correcting: it would
-    be easy to make the negatives above pass by disabling the feature.
+    A shape-preserving reconstruction of a partner POC agreement's parties clause —
+    the wording and punctuation are the original's, the company is invented. A guard
+    against over-correcting: it would be easy to make the negatives above pass by
+    disabling the feature.
+
+    Two things this pins deliberately. It asserts the value EXACTLY, because substring
+    containment also accepts a longer wrong reading that happens to span the right
+    name. And it records that the reading lands in `## Needs follow-up (weak)`, not
+    `## Answers`: that is what docdex does today, and a test that quietly tolerated
+    either would not notice the day it changes in the wrong direction.
     """
     project = corpus(
         tmp_path,
         "Trial Agreement 1 Background 1.1 Parties The parties to the present "
         "agreement are: Helios Components Private Limited (“Supplier”), a company "
         "incorporated under the laws of India\n")
-    got = value_of(fill(project, "Legal name"), "Legal name")
-    assert "Helios Components Private Limited" in got, (
-        f"the one real apposition docdex read correctly was lost: {got!r}")
+    packet = fill(project, "Legal name")
+    stated = re.sub(r"\s*\[[^\]]*\](\s*~approx)?\s*$", "",
+                    value_of(packet, "Legal name")).strip()
+    assert stated == "Helios Components Private Limited", (
+        f"the one apposition docdex read correctly was lost or blurred: {stated!r}")
+    assert not answered(packet, "Legal name"), (
+        "this reading is expected to be weak, not asserted under ## Answers — if that "
+        "improved, tighten this test rather than deleting it")
 
 
 def test_a_company_is_not_offered_as_a_quantity(tmp_path):

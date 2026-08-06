@@ -109,9 +109,9 @@ def test_unrelated_token_not_tagged_approx(tmp_path):
     # ("owner") against group service level↔SLA must NOT be tagged ~approx.
     project = _synced_alias_project(
         tmp_path, {"service level": ["sla"]},
-        {"sla.txt": "SLA owner: alice@x.com\n"})
+        {"sla.txt": "SLA owner: alice@example.invalid\n"})
     packet = ctxmod.build_packet(project, "service owner email", budget=2000)
-    assert "alice@x.com" in packet        # the hit was retrieved and packed
+    assert "alice@example.invalid" in packet        # the hit was retrieved and packed
     assert "~approx" not in packet        # but not falsely flagged as an alias hit
 
 

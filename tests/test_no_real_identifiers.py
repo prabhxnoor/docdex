@@ -2,158 +2,274 @@
 
 This repository is public. It once carried, in its test suite, a counterparty's name
 inside a verbatim confidentiality clause that forbade disclosing that name, a real
-grant receipt, a real order ID, and a company's CIN and registered office. Those
-fixtures existed for a good reason — each was a real line that broke the extractor,
-and no synthetic fixture had produced them — so they were replaced with synthetic
-values of the SAME SHAPE rather than deleted, and the regressions still bite.
+grant receipt, a supplier ledger row with its reference number, an order ID, and a
+company's CIN and registered office. Those fixtures existed for a good reason — each
+was a real line that broke the extractor, and no synthetic fixture had produced them —
+so they were replaced with invented values of the SAME SHAPE rather than deleted, and
+the regressions still bite.
 
-This file stops it happening again. Two mechanisms, because neither alone is enough:
+This file stops it happening again. Three mechanisms, because each covers a different
+way a value gets back in:
 
-* **Hashes, for names.** A name cannot be recognised by shape, and writing the real
-  names here to forbid them would re-publish the very thing being removed. So the
-  watch list is SHA-256 digests of normalised word n-grams. The digests reveal
-  nothing; a match means the plaintext is back.
-* **An allow-list, for identifiers.** A CIN or GSTIN *can* be recognised by shape,
-  but our own synthetic fixtures are the same shape, so a bare shape check would flag
-  them. Instead every identifier-shaped token in the tree must be one we chose.
+* **The watchlist, for names.** A name cannot be recognised by shape. The real values
+  live in `.sanitisation-watchlist`, which is gitignored and never published. An
+  earlier version published SHA-256 hashes of them instead; that was wrong. Unsalted
+  hashes of one-word values — a surname, a city, a funding acronym — fall to a
+  wordlist, so the hashes re-disclosed the very thing being removed. Keeping the
+  plaintext out of the repo entirely is both safer and simpler: matching is a plain
+  normalised substring test, with no n-gram window and no length cap to get wrong.
 
-If this file fails, do not weaken it. Replace the value with a synthetic one of the
-same shape, and check whether it also needs removing from git history — the working
-tree being clean says nothing about what is still reachable by commit SHA.
+* **Allow-listed shapes, for identifiers.** A CIN or GSTIN *can* be recognised by
+  shape, but our own invented fixtures share that shape, so a bare shape check would
+  flag them. Every identifier-shaped token must therefore be one we chose — and the
+  allow-list itself is checked for being obviously invented, because an allow-list you
+  can add a real value to is not a control.
+
+* **Artifacts, because that is where the residue actually was.** An adversarial review
+  found the pre-sanitisation values still sitting in `.pytest_cache` node IDs, in
+  `build/lib/`, and inside a built wheel in `dist/` that was ready to upload. None of
+  those are tracked, so a scan of `git ls-files` said everything was clean while a
+  publishable artifact still carried the values. Ignored is not the same as absent.
+
+If this file fails, do not weaken it. Replace the value with an invented one of the
+same shape, and check whether it also needs removing from git history and from any
+built artifact — a clean working tree says nothing about either.
 """
 from __future__ import annotations
 
-import hashlib
 import re
 import subprocess
+import unicodedata
+import zipfile
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
+GUARD = Path(__file__).resolve().relative_to(REPO).as_posix()
+WATCHLIST = REPO / ".sanitisation-watchlist"
 
-# SHA-256 of normalised word n-grams of every value removed in the v0.6.0
-# sanitisation. Generated, never hand-edited. Plaintext is deliberately absent.
-FORBIDDEN_HASHES = {
-    "2245c9a2470ef490f8585bbd10d1c9e7bd10ffe3e4fccbf73360421d6bdeb862",
-    "2ba38c657de10f7b0956809d5770e4db4a5e4025413e22f93c1b38820f37595d",
-    "339fd5ce6dbbff6ccc83ce017050cf9aff0d5623708bf121da1f2a4a297f81c5",
-    "3a0b029a4495d4973e995bd25c10ccac1d8ab881be26eaf5144e91a672c36e1e",
-    "3ca679504af3ae137cf44cf187a804fdd997d4aa116b09460c7ceab865b0ffec",
-    "41396fb04a91e966847a8d1b9002720b70e9ad785d1bac48de5dd4eaa8d4c9f0",
-    "49b94d2d06ef3f1db878bc32339928bef540a54b71aed53d3dcfaa24e4742390",
-    "4c252dd8085bfb64a8598394045a646deca57708bf2d93695365829d85898700",
-    "6228a5824a1e8d1554519125795ad14c1b7be681c6e9efbbbc66c91bbf2f89e5",
-    "6854541d3abf20be242897593454adf5ff82e92989bdf621aece09606f95b8f0",
-    "8988cb5e32c5590e629c603b0da3189c3eb6c36862f177d190ec95ff30a9990d",
-    "8c0b0fb70efd58545636dc76efa0ce89b59609c34cb8001c13a5a0caf5ee245b",
-    "8cc6810cef67dc52d33c6495d0ce6f92f9468a59f44ee9432405da8de93a3118",
-    "92bb6d4b7b035b285c07037bbd1e020fbb6b23ae08baf23ed4128e475e4a705e",
-    "9592286f050bfa5e7da9b20a23d1d86ba73927bfba09bb0527046ca051086f74",
-    "9cd11f3c55046683bd97e712213871d5cebdd10a9bd4306bcd25f454e440bc8a",
-    "a0b7bc6cc83c0356f3f1be0d6c8f235a3affe7b61bba6e13ca9314fd04ed4057",
-    "a15e196b12a72da96d93f07c6c9693f35f6fe6f8e56af60e015d11fc8f080f81",
-    "ac0d5a930d4caf24306388fb84907ad8589673d60bee16636d981885e2245fe9",
-    "adfb268a569fa2e5ecd09c117b378c0d2d4cfb4e8606f0cb3cc617d4c1cb55f0",
-    "af5b5872006dab39653c09335a3e0043f0088d145b34cab0e33b16d30e0c08ce",
-    "b0cc7279eabf70bd29db6ac55af67b6fe75546866a6ffdff305cb034cb62c3d3",
-    "b693fb8ca4bc20534ceb6a5e6b7a49c09f4649cd3a4188dc91b8093000ceaaa3",
-    "b6eda7fd0019b30e00a5cc0fce16f6cc8f8e35ec8f80f75be20032a9df724fb1",
-    "b76092a2cc54aa888ec36983c70ac4a7309dcd78591e36e1f452996b023becb1",
-    "b9e8c14b70a0c2c87f92702419ebbde892746bdaca98c67fcc702c34193f19f9",
-    "c9dbc1598c24b8f21c54a366066fb582d5a41b220b71c6dc4f464eea96ace385",
-    "d96d3596996f98423e01d5fbb0af76fd17959494a5b3d5d8798bd3f9675478aa",
-    "e595ce68b9d881026725ae17ffdc912f47beff6735f1f02afaf81cda45ed032a",
-    "f4b2594af1596d6415c3a283a3ff2adaa6bb57bcdab7fb11998405cfe06bddf5",
-    "fc86d987b1ce90de02d8d42bf7cf0faeffc66b5e4efc28f4869c5e2981bae754",
-    "fef80763034fc3790aa603a67a7f1e7485cd56009f78db76addabf55665f31ad",
-}
-# Capped at 5 words, not at the longest removed value (15). Verified lossless: every
-# longer value contains a kept shorter window — the grant sentence carries the funding
-# body and the party, the address carries the building — so nothing escapes by being
-# long, and the scan stays 3x cheaper.
-MAX_NGRAM = 5
+# Ignored trees that have actually held residue, plus archives whose members must be
+# read rather than trusted. Scanned only if present, so a fresh clone is unaffected.
+ARTIFACT_DIRS = ("build", "dist", ".pytest_cache", ".mypy_cache", ".ruff_cache")
+ARCHIVE_SUFFIXES = (".whl", ".zip")
 
 CIN_SHAPE = re.compile(r"\b[UL][0-9]{5}[A-Z]{2}[0-9]{4}[A-Z]{3}[0-9]{6}\b", re.I)
 GSTIN_SHAPE = re.compile(r"\b[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9][A-Z][0-9A-Z]\b", re.I)
-# Deliberately kept, and every one of them invented.
-ALLOWED_IDENTIFIERS = {"u72900mh2019ptc123456", "27abcde1234f1z5", "29abcde1234f1z5"}
+PAN_SHAPE = re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b")
+IFSC_SHAPE = re.compile(r"\b[A-Z]{4}0[A-Z0-9]{6}\b")
+UDYAM_SHAPE = re.compile(r"\bUDYAM-[A-Z]{2}-[0-9]{2}-[0-9]{7}\b", re.I)
+# The boundaries reject alphanumerics, not just digits: a ten-digit run inside a
+# SHA-256 digest (`...c34df8450759209a4b2f...`) matched a digits-only lookbehind and
+# reported a benchmark checksum as a phone number.
+PHONE_SHAPE = re.compile(r"(?<![0-9A-Za-z])(?:\+91[\s-]?)?[6-9][0-9]{9}(?![0-9A-Za-z])")
 
-# An absolute home directory names the machine's owner and leaks a local layout.
-DEV_PATH = re.compile(r"/Users/[A-Za-z0-9._-]+/")
+# Every one of these is invented. The PAN-shaped ones are the documentation dummy
+# (`ABCDE1234F`) or a keyboard mash; the CIN and GSTIN embed an obviously sequential
+# run. `_test_allow_listed_identifiers_look_invented` enforces that, so a real value
+# cannot be quietly added here to make the shape test pass.
+ALLOWED_IDENTIFIERS = {
+    "u72900mh2019ptc123456",     # CIN, sequential tail
+    "27abcde1234f1z5",           # GSTIN over the dummy PAN
+    "29abcde1234f1z5",           # GSTIN over the dummy PAN
+    "abcde1234f",                # the documentation dummy PAN
+    "zxcvb9876k",                # keyboard mash
+}
+SYNTHETIC_MARKS = ("abcde1234f", "123456", "zxcvb", "9876")
 
-# This file necessarily talks about the scan, so it would match itself.
-SELF = Path(__file__).name
+# An absolute home directory names the machine's owner; `~/Projects/...` leaks the
+# same local layout without the username, and the first version missed it.
+LOCAL_PATH = re.compile(r"(?:/(?:Users|home)/[A-Za-z0-9._-]+|~/(?:Projects|Documents|Desktop)/)")
+
+_CONFUSABLES = str.maketrans({
+    "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M",
+    "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T",
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c",
+    "і": "i", "Α": "A", "Β": "B", "Ε": "E", "Ο": "O",
+})
 
 
-def _normalise(text: str) -> list[str]:
-    return re.findall(r"[a-z0-9]+", text.lower())
+def normalise(text: str) -> str:
+    """Words only, lowercased, single-spaced, homoglyphs folded to ASCII.
+
+    Collapsing whitespace is what lets this see a value wrapped across a line break —
+    the case a literal search missed in CHANGELOG.md. Folding confusables closes the
+    trivial Cyrillic-'о' substitution. It does NOT constant-fold Python string
+    concatenation, so a value assembled as `"Ald" + "ridge"` still escapes; that is a
+    known limit, recorded rather than pretended away.
+    """
+    text = unicodedata.normalize("NFKD", text).translate(_CONFUSABLES)
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
 
 
-def _ngram_digests(words: list[str]):
-    """Every 1..MAX_NGRAM word window, as (digest, joined) pairs."""
-    for n in range(1, MAX_NGRAM + 1):
-        for i in range(len(words) - n + 1):
-            joined = " ".join(words[i:i + n])
-            yield hashlib.sha256(joined.encode("utf-8")).hexdigest(), joined
+def load_watchlist() -> list[str]:
+    if not WATCHLIST.exists():
+        return []
+    out = []
+    for line in WATCHLIST.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            out.append(line)
+    return out
 
 
-def _tracked_text_files():
-    out = subprocess.run(["git", "-C", str(REPO), "ls-files"],
+def scan(items, watch: list[str]) -> list[str]:
+    """THE scanner. `items` is (label, text); `watch` is plaintext values.
+
+    Both the real test and the canary go through this one function. The previous
+    version had the canary exercise a helper the real test did not depend on, so
+    emptying the watchlist left every test passing — a guard asleep and silent.
+    """
+    needles = [(v, normalise(v)) for v in watch]
+    needles = [(v, n) for v, n in needles if n]
+    hits = []
+    for label, text in items:
+        haystack = normalise(text)
+        for value, needle in needles:
+            if needle in haystack:
+                hits.append("%s: %s" % (label, value))
+    return hits
+
+
+def _tracked_paths() -> list[str]:
+    # -z, because a filename containing a newline would otherwise split into two
+    # bogus paths and the real one would go unscanned.
+    out = subprocess.run(["git", "-C", str(REPO), "ls-files", "-z"],
                          capture_output=True, text=True, check=True).stdout
-    for rel in out.splitlines():
-        if not rel or Path(rel).name == SELF:
+    return [p for p in out.split("\0") if p]
+
+
+def _artifact_paths() -> list[Path]:
+    found = []
+    for d in ARTIFACT_DIRS:
+        root = REPO / d
+        if root.is_dir():
+            found += [p for p in root.rglob("*") if p.is_file()]
+    found += [p for p in REPO.rglob("*")
+              if p.is_file() and p.suffix in ARCHIVE_SUFFIXES
+              and ".venv" not in p.parts and ".git" not in p.parts]
+    return found
+
+
+def collect():
+    """(items, undecodable) — every text we can read, and every one we cannot."""
+    items, undecodable = [], []
+    for rel in _tracked_paths():
+        if rel == GUARD:                     # the exact path, not any file so named
             continue
         path = REPO / rel
         try:
-            yield rel, path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue          # binary or unreadable: nothing to match
+            items.append((rel, path.read_text(encoding="utf-8")))
+        except UnicodeDecodeError:
+            undecodable.append(rel)          # fail closed, do not skip silently
+        except OSError:
+            undecodable.append(rel)
+    for path in _artifact_paths():
+        rel = path.relative_to(REPO).as_posix()
+        if path.suffix in ARCHIVE_SUFFIXES:
+            try:
+                zf = zipfile.ZipFile(path)
+            except (zipfile.BadZipFile, OSError):
+                undecodable.append(rel)
+                continue
+            for member in zf.namelist():
+                try:
+                    items.append(("%s!%s" % (rel, member),
+                                  zf.read(member).decode("utf-8")))
+                except (UnicodeDecodeError, OSError, zipfile.BadZipFile):
+                    continue                 # binary member of a build artifact
+        else:
+            try:
+                items.append((rel, path.read_text(encoding="utf-8")))
+            except (UnicodeDecodeError, OSError):
+                continue                     # ignored caches hold binaries too
+    return items, undecodable
 
 
-ALL_FILES = list(_tracked_text_files())
+ITEMS, UNDECODABLE = collect()
+WATCH = load_watchlist()
 
 
-def test_the_scan_can_actually_fail():
-    """A guard that cannot fail guards nothing.
+def test_the_scanner_catches_a_planted_value():
+    """End to end through the same `scan` the real test uses.
 
-    Proves the n-gram mechanism detects a planted value, using a canary whose
-    plaintext is safe to write here — so the proof costs no disclosure.
+    The canary's plaintext is safe to write here, so proving the mechanism costs no
+    disclosure. It must fail when a watched value is present and stay quiet when the
+    watchlist is empty — that second half is what makes the first half mean anything.
     """
-    canary = "zzcanary forbidden identifier zz"
-    digest = hashlib.sha256(" ".join(_normalise(canary)).encode()).hexdigest()
-    found = {d for d, _ in _ngram_digests(_normalise("text with %s inside" % canary))}
-    assert digest in found, "the n-gram scan cannot see a value that is present"
-    assert digest not in FORBIDDEN_HASHES, "the canary must not be a real entry"
+    canary = "Zzcanary Forbidden Identifier Zz"
+    planted = [("fake.md", "prose mentioning %s in passing" % canary)]
+    assert scan(planted, [canary]), "the scanner cannot see a value that is present"
+    assert not scan(planted, []), "the scanner reports a hit with nothing to watch"
+    # wrapped across a line break, and recased — both must still match
+    wrapped = [("fake.md", "prose mentioning zzcanary forbidden\n  IDENTIFIER zz here")]
+    assert scan(wrapped, [canary]), "a value wrapped across lines escaped the scanner"
 
 
-def test_no_tracked_file_contains_a_removed_identifier():
-    hits = []
-    for rel, text in ALL_FILES:
-        for digest, joined in _ngram_digests(_normalise(text)):
-            if digest in FORBIDDEN_HASHES:
-                hits.append("%s: %r" % (rel, joined))
+def test_the_watchlist_is_present_and_populated():
+    """A guard with nothing to watch passes everything and says nothing.
+
+    Skipped rather than failed when the file is absent, so a fresh clone is usable —
+    but never silently: the reason names the file. This is a local pre-commit control,
+    not a CI gate, because the values must not live in the repository.
+    """
+    if not WATCHLIST.exists():
+        pytest.skip("no %s in this checkout — the name watchlist cannot run. The "
+                    "shape and path checks below still do." % WATCHLIST.name)
+    assert len(WATCH) >= 20, (
+        "%s has only %d entries; it is meant to hold every value removed in the "
+        "v0.6.0 sanitisation" % (WATCHLIST.name, len(WATCH)))
+
+
+def test_nothing_scannable_contains_a_removed_value():
+    if not WATCHLIST.exists():
+        pytest.skip("no %s in this checkout" % WATCHLIST.name)
+    hits = scan(ITEMS, WATCH)
     assert not hits, (
-        "a real identifier removed in the v0.6.0 sanitisation is back:\n  "
-        + "\n  ".join(sorted(set(hits))))
+        "a value removed in the v0.6.0 sanitisation is back. Ignored artifacts count: "
+        "the review found these in .pytest_cache, build/ and a built wheel while the "
+        "tracked tree was clean.\n  " + "\n  ".join(sorted(set(hits))))
 
 
-@pytest.mark.parametrize("shape,label", [(CIN_SHAPE, "CIN"), (GSTIN_SHAPE, "GSTIN")])
+def test_every_tracked_file_could_actually_be_read():
+    """Fail closed. Skipping what it cannot decode is how a scanner lies."""
+    assert not UNDECODABLE, (
+        "these tracked files could not be decoded, so nothing above examined them:\n  "
+        + "\n  ".join(sorted(UNDECODABLE)))
+
+
+@pytest.mark.parametrize("shape,label", [
+    (CIN_SHAPE, "CIN"), (GSTIN_SHAPE, "GSTIN"), (PAN_SHAPE, "PAN"),
+    (IFSC_SHAPE, "IFSC"), (UDYAM_SHAPE, "UDYAM"), (PHONE_SHAPE, "phone"),
+])
 def test_every_identifier_shaped_token_is_one_we_invented(shape, label):
     unknown = []
-    for rel, text in ALL_FILES:
+    for name, text in ITEMS:
         for token in shape.findall(text):
-            if token.lower() not in ALLOWED_IDENTIFIERS:
-                unknown.append("%s: %s" % (rel, token))
+            if token.lower().replace(" ", "").replace("-", "") not in ALLOWED_IDENTIFIERS:
+                unknown.append("%s: %s" % (name, token))
     assert not unknown, (
-        "%s-shaped token that is not in the invented allow-list — if it is real it "
-        "must not be here, and if it is synthetic add it to ALLOWED_IDENTIFIERS:\n  "
-        % label + "\n  ".join(sorted(set(unknown))))
+        "%s-shaped token that is not in the invented allow-list. If it is real it must "
+        "not be here; if it is invented, add it to ALLOWED_IDENTIFIERS — and it has to "
+        "carry one of the synthetic marks:\n  " % label
+        + "\n  ".join(sorted(set(unknown))))
 
 
-def test_no_absolute_home_directory_paths():
-    hits = ["%s: %s" % (rel, m) for rel, text in ALL_FILES
-            for m in set(DEV_PATH.findall(text))]
+def test_allow_listed_identifiers_look_invented():
+    """An allow-list you can drop a real value into is not a control.
+
+    Every entry must carry a mark that no issued identifier would: the documentation
+    dummy PAN, a sequential run, or a keyboard mash.
+    """
+    bad = [v for v in ALLOWED_IDENTIFIERS
+           if not any(mark in v for mark in SYNTHETIC_MARKS)]
+    assert not bad, (
+        "allow-listed identifier with nothing marking it as invented: %s" % sorted(bad))
+
+
+def test_no_local_filesystem_paths():
+    hits = ["%s: %s" % (name, m)
+            for name, text in ITEMS for m in set(LOCAL_PATH.findall(text))]
     assert not hits, (
-        "an absolute home directory names the machine's owner:\n  "
+        "a local path leaks the machine's owner or layout:\n  "
         + "\n  ".join(sorted(set(hits))))

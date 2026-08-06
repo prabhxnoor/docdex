@@ -333,14 +333,14 @@ def test_a_real_value_beside_a_cross_reference_is_still_found(tmp_path):
         f"a real amount was lost or altered beside a cross-reference: {got!r}")
 
 
-# ================== 1c. what the real corpus said, in its own words ------------
+# ============ 1c. what the real corpus said, reconstructed in its shape ---------
 #
-# Both lines below are verbatim from the real corpus. Running this release over 104,168
+# Both lines below reconstruct the shape of real corpus lines. Running this release over 104,168
 # real chunks changed 20 field answers, and every one of them was newly WRONG — no
 # fixture and neither review pass produced a single one of them.
 
 def test_a_number_further_down_the_sentence_is_not_the_date(tmp_path):
-    """Verbatim from a signed NDA. "2nd Floor" is not an effective date.
+    """The shape of a signed NDA's preamble. "2nd Floor" is not an effective date.
 
     Keeping `Pvt. Ltd.` inside one clause made clauses longer, and a longer clause lets
     the value window run past the label until it finds *some* number. Here the window
@@ -361,7 +361,7 @@ def test_a_number_further_down_the_sentence_is_not_the_date(tmp_path):
 
 
 def test_a_transaction_id_is_not_a_legal_name(tmp_path):
-    """Verbatim from an exported Zoho ledger. A company is not a 19-digit number.
+    """The shape of an exported ledger row. A company is not a 19-digit number.
 
     `vendor_payment` tokenises to `vendor`, which is a declared synonym of `Legal name`,
     so the window after it reached the next column and answered a transaction ID as the

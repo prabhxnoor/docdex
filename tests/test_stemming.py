@@ -28,7 +28,12 @@ def test_stem_lowercases_plain_words():
 
 def test_identifiers_and_amounts_are_never_stemmed():
     # Anything with a digit is an identifier/amount/date — returned unchanged.
-    for tok in ("gstr3b", "42000000", "27abcde1234f1z5", "31"):
+    #
+    # The first four are Porter fixed points anyway (`_porter(x) == x` for each), so on
+    # their own this test passes even with the digit guard deleted — it asserted a
+    # property it could not observe. `gstr3bs` and `form16s` are the ones that make it
+    # bite: Porter strips their trailing `s`, so only the guard keeps them literal.
+    for tok in ("gstr3b", "42000000", "27abcde1234f1z5", "31", "gstr3bs", "form16s"):
         assert stem(tok) == tok.lower()
 
 

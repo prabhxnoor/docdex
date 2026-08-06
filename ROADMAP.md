@@ -192,7 +192,7 @@ foundation is solid enough to build them safely.
     validation; semantic no-match honesty; SPDX license.
   - [x] Corrupt-inventory detection made Python-version-independent (NUL guard).
 - **Independently audited 2026-06-11 (round 2)** — reports kept locally in
-  `~/Projects/docdex-qa/v0.2.0/`. The FTS5 engine was validated (flat ~36 ms
+  `../docdex-qa/v0.2.0/`. The FTS5 engine was validated (flat ~36 ms
   search even at 50k files); the auditor found **1 critical + 7 major** issues,
   all feeding the v0.3 plan below. Headline verdict: *"the engine is good; the gap
   is task awareness — coverage, budgets, conflicts, follow-up signalling."*
@@ -205,7 +205,7 @@ foundation is solid enough to build them safely.
   flags conflicting sources (newer first), is fast at scale again (DDX-019: no
   per-call corpus walk), and parses all/Unicode form fields (DDX-020). 108 tests.
 - **Independently audited 2026-06-12 (round 3)** — reports kept locally in
-  `~/Projects/docdex-qa/v0.3.0/`. The **speed fix is confirmed** (50k-file packet
+  `../docdex-qa/v0.3.0/`. The **speed fix is confirmed** (50k-file packet
   ~253 ms median vs 43 ms search; the old ~4.4 s walk is now behind
   `--check-freshness`) and the prior trust fixes hold. But the **central v0.3
   thesis was refuted**: an agent still cannot reliably tell a complete packet from

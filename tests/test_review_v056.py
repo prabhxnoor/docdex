@@ -1044,11 +1044,11 @@ def test_an_unrelated_shared_word_still_triggers_nothing(tmp_path):
     retrieved exactly by "owner" and "email" — a wrong widening left no trace.
     """
     project = corpus(tmp_path, {
-        "Docs/sla.md": "SLA owner: alice@x.com\n",
+        "Docs/sla.md": "SLA owner: alice@example.invalid\n",
         "Docs/only_sla.md": "The SLA governs zebrafish handling.\n"},
         aliases={"service level": ["sla"]})
     packet = build_packet(project, "service owner email", budget=2000)
-    assert "alice@x.com" in packet, packet
+    assert "alice@example.invalid" in packet, packet
     assert not citation_lines(packet, "Docs/only_sla.md"), (
         "a document reachable only through an untriggered alias entered the "
         "packet:\n" + packet)

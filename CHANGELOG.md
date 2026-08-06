@@ -107,7 +107,7 @@ was newly wrong.** Neither review pass and no fixture produced a single one:
   with the transaction ID. A field that wants a party is answered by a name or not at
   all — the registry above is what makes that one rule instead of one more heuristic.
 
-Both real lines are now permanent tests, verbatim. Re-measured over the same 3,272
+Both real lines are now permanent tests, as shape-preserving reconstructions. Re-measured over the same 3,272
 affected chunks after both fixes: **0 answers changed**, down from 20. And the stored
 `has_value` column matches what the shipped code computes for all 104,168 chunks exactly,
 so nothing is unreachable and no tie-break is spent on a stale signal.
