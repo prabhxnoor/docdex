@@ -52,6 +52,25 @@ def make_docx(path: Path, text: str) -> None:
     doc.save(str(path))
 
 
+def make_pptx(path: Path, slide_texts) -> None:
+    """A real .pptx with one text box per slide.
+
+    Slide-level placement is the point: the retrieval incident this fixture
+    reproduces depends on two query terms living on DIFFERENT slides of one deck,
+    which is invisible to any helper that concatenates the text first.
+    """
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    blank = prs.slide_layouts[6]
+    for text in slide_texts:
+        slide = prs.slides.add_slide(blank)
+        box = slide.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(9), Inches(5))
+        box.text_frame.text = text
+    prs.save(str(path))
+
+
 def make_xlsx(path: Path, cells) -> None:
     import openpyxl
     wb = openpyxl.Workbook()
