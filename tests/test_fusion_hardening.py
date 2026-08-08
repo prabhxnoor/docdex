@@ -90,10 +90,14 @@ def test_real_sqlite_failure_is_not_silently_degraded(indexed, monkeypatch, mess
     """
     real = index_db._mirror_rows
 
-    def boom(conn, table, match, folder, limit):
+    # *args, so this double keeps testing what it is about — that a real SQLite
+    # failure surfaces — instead of breaking every time the query grows a parameter.
+    # It went red on v0.6.0's `exts` argument with a TypeError, which looks like a
+    # regression in the code under test and is not one.
+    def boom(conn, table, match, folder, limit, *args, **kwargs):
         if table == "chunks_fts_exact":
             raise sqlite3.OperationalError(message)
-        return real(conn, table, match, folder, limit)
+        return real(conn, table, match, folder, limit, *args, **kwargs)
 
     monkeypatch.setattr(index_db, "_mirror_rows", boom)
 

@@ -234,14 +234,60 @@ def test_control_empty_hashes_are_never_grouped_together(incident):
         % found)
 
 
-@pytest.mark.xfail(strict=True, reason="B1 not built: search() has no ext filter")
 def test_gate_extension_filter_is_complete_and_applied_before_the_limit(incident):
+    """B1, and the single highest-leverage fix: rank 22 to inside the window.
+
+    The deck is NOT in the unfiltered top 8 — `test_the_incident_reproduces` asserts
+    that. So a filter applied to the window afterwards would have nothing to keep and
+    would report the deck absent. Finding it here is what proves the filter runs
+    inside candidate selection, before each mirror's LIMIT.
+    """
     hits = index_db.search(incident, QUERY, limit=WINDOW, ext=[".pptx"])
     assert hits, ("filtering to .pptx returned nothing. A filter applied after the "
                   "chunk window is worse than no filter: it silently answers 'absent' "
                   "for a document that is present")
     assert all(h["rel"].endswith(".pptx") for h in hits), rels(hits)
     assert WANTED in rels(hits), rels(hits)
+
+
+def test_the_word_a_user_types_finds_the_file_type_on_disk(incident):
+    """"ppt" is what the incident query actually said; `.pptx` is what is on disk.
+
+    Legacy `.ppt` is not extractable by this build, so mapping the word to the
+    extension it can read is the difference between finding the deck and a refusal
+    that is accurate and useless.
+    """
+    for spelling in ("ppt", "pptx", ".PPTX", "PowerPoint", "deck"):
+        hits = index_db.search(incident, QUERY, limit=WINDOW, ext=[spelling])
+        assert WANTED in rels(hits), "%r found nothing: %s" % (spelling, rels(hits))
+
+
+def test_an_extension_we_cannot_read_is_a_diagnostic_not_an_empty_result(incident):
+    """"No .ppt matched" and "this build cannot read .ppt" are different answers.
+
+    Returning nothing would be true and misleading — the deck IS there. Anything
+    that silently narrows the corpus has to say so.
+    """
+    from docdex.config import DocdexError
+    with pytest.raises(DocdexError) as exc:
+        index_db.search(incident, QUERY, limit=WINDOW, ext=[".xyz"])
+    assert ".xyz" in str(exc.value)
+    assert ".pptx" in str(exc.value), "the message should say what it CAN read"
+
+
+def test_filtering_narrows_the_corpus_without_reordering_it(incident):
+    """A filter must remove rows, never re-rank the survivors.
+
+    If it changed relative order it would be a ranking change wearing a filter's
+    clothes, and the release gate 'unfiltered behaviour unchanged' would not catch
+    it — that gate only watches the unfiltered path.
+    """
+    wide = [h["rel"] for h in index_db.search(incident, QUERY, limit=300)]
+    pptx_in_order = [r for r in wide if r.endswith(".pptx")]
+    filtered = rels(index_db.search(incident, QUERY, limit=300, ext=["pptx"]))
+    assert filtered == pptx_in_order, (
+        "filtering changed the order of the surviving rows:\n  filtered: %s\n  "
+        "expected: %s" % (filtered[:6], pptx_in_order[:6]))
 
 
 @pytest.mark.xfail(strict=True, reason="B2 not built: _content_terms drops any term "

@@ -27,6 +27,7 @@ from typing import List, Optional
 
 from docdex import tokens as tok
 from docdex.config import DocdexError, Project
+from docdex.extract import extractable_extensions, normalise_exts
 from docdex.inventory import read_inventory
 from docdex.search import tokenize
 
@@ -551,7 +552,7 @@ def _has_value_column(conn) -> bool:
 
 
 def _mirror_rows(conn, table: str, match: str, folder: Optional[str],
-                 limit: int) -> List[sqlite3.Row]:
+                 limit: int, exts: Optional[set] = None) -> List[sqlite3.Row]:
     """Top `limit` rows from one FTS mirror.
 
     Ordering is BM25 first, so genuine relevance always wins. `has_value` and then
@@ -574,6 +575,21 @@ def _mirror_rows(conn, table: str, match: str, folder: Optional[str],
     if folder:
         sql += " AND c.rel LIKE ? ESCAPE '\\'"
         params.append(f"%{_like_escape(folder)}%")
+    if exts:
+        # Inside candidate selection, BEFORE this mirror's LIMIT — never as a filter
+        # over rows already chosen. Filtering afterwards asks the wrong question: if
+        # the top `limit` chunks happen to hold no .pptx, a post-filter returns
+        # nothing and reports the deck absent, when the deck was merely outranked.
+        # That is exactly how a nine-slide deck came back at rank 33.
+        #
+        # `files` is joined only when filtering. Ranked retrieval has never touched
+        # that table, and adding an unconditional join would change the query plan
+        # for every ordinary search to buy nothing.
+        sql = sql.replace(f"JOIN chunks c ON c.chunk_id = {table}.rowid",
+                          f"JOIN chunks c ON c.chunk_id = {table}.rowid "
+                          f"JOIN files f ON f.rel = c.rel")
+        sql += " AND f.ext IN (%s)" % ",".join("?" * len(exts))
+        params.extend(sorted(exts))
     # Bucket by SCORE_GRAIN first so noise-level differences don't decide; within a
     # bucket prefer a value-bearing chunk, then fall back to the exact score, then to
     # a stable path order. Chunks whose relevance genuinely differs never reorder.
@@ -586,7 +602,7 @@ def _mirror_rows(conn, table: str, match: str, folder: Optional[str],
 
 
 def search(project: Project, query: str, folder: Optional[str] = None,
-           limit: int = 8) -> List[dict]:
+           limit: int = 8, ext=None) -> List[dict]:
     """BM25-ranked chunk hits, best first. Empty list when nothing matches;
     raises FileNotFoundError when the FTS index is unavailable so the caller
     can fall back.
@@ -601,11 +617,19 @@ def search(project: Project, query: str, folder: Optional[str] = None,
     match = _match_query(query)
     if match is None:
         return []
+    exts, unusable = normalise_exts(ext)
+    if unusable:
+        # Never a silently trusted empty result. Saying "no .foo files matched" when
+        # docdex cannot read .foo at all is a different answer from "none exist".
+        raise DocdexError(
+            "cannot filter on %s — this build extracts text from: %s"
+            % (", ".join(repr(u) for u in unusable),
+               " ".join(sorted(extractable_extensions()))))
     pool = max(limit * FUSE_POOL_FACTOR, FUSE_POOL_MIN)
     conn = connect(project)
     try:
         try:
-            exact_rows = _mirror_rows(conn, "chunks_fts_exact", match, folder, pool)
+            exact_rows = _mirror_rows(conn, "chunks_fts_exact", match, folder, pool, exts)
         except sqlite3.OperationalError as exc:
             # ONLY this exact mirror being absent means "the database predates v3".
             # Corruption, a lock timeout, an I/O error — or some *other* missing
@@ -615,7 +639,7 @@ def search(project: Project, query: str, folder: Optional[str] = None,
             if "no such table" not in msg or "chunks_fts_exact" not in msg:
                 raise
             exact_rows = []
-        stem_rows = _mirror_rows(conn, "chunks_fts", match, folder, pool)
+        stem_rows = _mirror_rows(conn, "chunks_fts", match, folder, pool, exts)
     finally:
         conn.close()
     rows = _fuse([exact_rows, stem_rows], limit)

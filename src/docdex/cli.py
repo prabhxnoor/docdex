@@ -189,9 +189,19 @@ def cmd_search(args: argparse.Namespace) -> int:
     # Prefer the BM25 (FTS5) engine; fall back to the cache scorer when the
     # index hasn't been built or the local SQLite lacks FTS5.
     try:
-        rows = index_db.search(project, args.query, folder=args.folder, limit=args.limit)
+        rows = index_db.search(project, args.query, folder=args.folder,
+                               limit=args.limit, ext=getattr(args, "ext", None))
         if not rows:
-            print(f"no indexed text matches: {args.query}", file=sys.stderr)
+            # Name the constraints. "Nothing matched" and "nothing matched ONCE I
+            # narrowed it to .pptx under Contracts/" are different answers, and only
+            # the second tells you which restriction to drop.
+            narrowed = []
+            if getattr(args, "ext", None):
+                narrowed.append("type " + ", ".join(args.ext))
+            if args.folder:
+                narrowed.append(f"folder containing {args.folder!r}")
+            where = (" (restricted to " + "; ".join(narrowed) + ")") if narrowed else ""
+            print(f"no indexed text matches: {args.query}{where}", file=sys.stderr)
             return 1
         for rank, r in enumerate(rows, 1):
             snip = snippet(r["text"], args.query, terms)
@@ -409,6 +419,9 @@ def main(argv=None) -> int:
     p = sub.add_parser("search", help="ranked keyword search over extracted text")
     p.add_argument("query")
     p.add_argument("--folder", help="restrict to paths containing this substring")
+    p.add_argument("--ext", action="append", metavar="EXT",
+                   help="only this file type; repeatable. Accepts what you would say "
+                        "('ppt', 'deck') as well as the extension ('.pptx')")
     p.add_argument("-n", "--limit", type=int, default=8)
     p.set_defaults(func=cmd_search)
 

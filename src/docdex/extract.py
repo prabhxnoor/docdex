@@ -33,6 +33,48 @@ TEXTUTIL_EXTENSIONS = {".doc", ".rtf"}  # macOS only
 
 UNSUPPORTED_PREFIX = "[unsupported"
 
+# What people type when they mean a file type. `ppt` is the important one: a user
+# asking for "an atp ppt" means a deck, and the deck on disk is `.pptx`. Legacy
+# `.ppt` is deliberately absent from EXTRACTABLE below — this codebase cannot read
+# it — so mapping the word to `.pptx` is the difference between finding the deck
+# and being told, truthfully but uselessly, that nothing matched.
+EXT_ALIASES = {
+    "ppt": ".pptx", "powerpoint": ".pptx", "deck": ".pptx", "slides": ".pptx",
+    "doc": ".docx", "word": ".docx",
+    "xls": ".xlsx", "excel": ".xlsx", "spreadsheet": ".xlsx",
+    "markdown": ".md", "text": ".txt",
+}
+
+
+def extractable_extensions() -> set:
+    """Every extension this build can actually read text out of."""
+    return TEXT_EXTENSIONS | OFFICE_EXTENSIONS | TEXTUTIL_EXTENSIONS
+
+
+def normalise_exts(values) -> tuple:
+    """(extensions to filter on, values we could not honour).
+
+    Returns the unusable ones rather than dropping them, because a filter that
+    silently matches nothing is worse than no filter: it answers "absent" for a
+    document that is present, and this tool is used on due-diligence questions
+    where that is the expensive direction to be wrong in. The caller is expected
+    to say so out loud.
+    """
+    known = extractable_extensions()
+    wanted, unknown = set(), []
+    for raw in values or []:
+        token = str(raw).strip().lower().lstrip("*")
+        if not token:
+            continue
+        token = EXT_ALIASES.get(token.lstrip("."), token)
+        if not token.startswith("."):
+            token = "." + token
+        if token in known:
+            wanted.add(token)
+        else:
+            unknown.append(str(raw))
+    return wanted, unknown
+
 # How many leading bytes to inspect when deciding whether a file is binary.
 _SNIFF_BYTES = 8192
 # C0 control bytes that are legitimate in real text: tab, LF, CR, form-feed.
